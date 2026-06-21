@@ -12,7 +12,7 @@ folder: Reference
 
 ## Summary
 
-Local inference engines are the software layer that loads, optimizes, and executes AI models on your hardware, transforming static model files into active, responsive systems. They manage memory allocation, handle quantization formats, and expose APIs so other applications can interact with the model.
+Local inference engines are the software layer that loads, optimizes, and executes AI models on your hardware, transforming static model files into active, responsive systems. They manage memory allocation, handle [[Model Quantization]] formats, and expose APIs so other applications can interact with the model.
 
 ## Core Concept: The Engine Layer
 
@@ -33,10 +33,10 @@ Local inference engines are the software layer that loads, optimizes, and execut
 
 | Engine | Best For | Key Strengths | Primary Formats |
 | :--- | :--- | :--- | :--- |
-| **Ollama** | Ease of use, quick setup | Auto-downloads models, OpenAI API, low friction | GGUF |
+| **[[Ollama]]** | Ease of use, quick setup | Auto-downloads models, OpenAI API, low friction | GGUF |
 | **llama.cpp** | CPU/GPU hybrid, flexibility | C++ backend, supports almost any CPU/GPU combo, GGUF native | GGUF |
 | **vLLM** | High throughput, serving | PagedAttention, massive context, GPU-optimized, production-ready | GGUF, AWQ, GPTQ |
-| **Text Generation WebUI** | All-in-one GUI | Community plugins, LoRA management, browser-based interface | GGUF, EXL2, GPTQ |
+| **Text Generation WebUI** | All-in-one GUI | Community plugins, [[Low Rank Adaptation]] management, browser-based interface | GGUF, EXL2, GPTQ |
 | **ExLlamaV2** | Speed on high-VRAM GPUs | Extremely fast inference, EXL2 native | EXL2 |
 | **LM Studio** | Desktop GUI users | Drag-and-drop, built-in chat, format auto-detection | GGUF, GPTQ |
 
@@ -92,7 +92,7 @@ The engine determines how efficiently your hardware is used.
 - **Layer Offloading**
     - Move layers between CPU RAM and GPU VRAM.
     - **Trade-off:** Offloading fewer layers saves VRAM but slows inference speed.
-- **VRAM Limits**
+- **[[VRAM with models in the ollama list]] Limits**
     - Engine must fit: `Model Weights + KV Cache + Overhead`.
     - **Context Window:** Larger context = larger KV cache = more VRAM needed per token.
 - **Batch Size**
@@ -126,5 +126,5 @@ flowchart TD
 - **Start Here:**
     - **Ollama** if you want to chat in 60 seconds.
     - **lmstudio** if you want a GUI but don't want to touch config files.
-    - **TextGen WebUI** if you want LoRAs, RAG, and community features in one place.
-    - **vLLM** if you are building an agent stack or hosting a local API for tools.
+    - **TextGen WebUI** if you want LoRAs, [[Retrieval Augmented Generation]], and community features in one place.
+    - **vLLM** if you are building an [[AI Agent Workflows]] stack or hosting a local API for tools.

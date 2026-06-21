@@ -145,11 +145,13 @@ def main() -> None:
                         help="Add [[wikilinks]] to a single existing note without regenerating its content")
     parser.add_argument("--relink-all", action="store_true", dest="relink_all",
                         help="Add [[wikilinks]] to all notes in the vault (use -f to limit to one folder)")
+    parser.add_argument("--merge", nargs="+", metavar="FILE",
+                        help="Merge two or more files into one note (combine with --explore to split the result)")
 
     args = parser.parse_args()
 
-    if not args.rework and not args.relink and not args.relink_all and not args.from_file and not args.topic:
-        parser.error("provide a topic, --from-file, --rework, --relink, or --relink-all")
+    if not args.rework and not args.relink and not args.relink_all and not args.from_file and not args.topic and not args.merge:
+        parser.error("provide a topic, --from-file, --rework, --relink, --relink-all, or --merge")
 
     _apply_preset(args)
     print(f"Provider : {config.PROVIDER}  |  Model: {config.MODEL}")
@@ -188,6 +190,48 @@ def main() -> None:
             new_body = link_note(body, titles_without_self)
             note.write_text(fm_raw + "\n" + new_body.strip() + "\n")
         print(f"Done     : {len(items)} notes relinked")
+        return
+
+    # --- Merge multiple files into one note (or split with --explore) --------
+
+    if args.merge:
+        paths = [Path(p) for p in args.merge]
+        for p in paths:
+            if not p.exists():
+                die(f"file not found: {p}")
+
+        combined = "\n\n".join(
+            f"--- SOURCE: {p.name} ---\n\n{read_source(p)}" for p in paths
+        )
+
+        title = args.title or paths[0].stem.replace("-", " ").replace("_", " ")
+
+        if args.folder:
+            folder = args.folder
+        else:
+            fm = _parse_frontmatter(paths[0])
+            folder = fm.get("folder") if fm.get("folder") in FOLDERS else "Inbox"
+        folder_path = VAULT_PATH / folder
+        folder_path.mkdir(parents=True, exist_ok=True)
+
+        if args.link:
+            vault_titles = list(_build_vault_index().values())
+            print(f"Linking  : vault index loaded ({len(vault_titles)} notes)")
+        else:
+            vault_titles = None
+
+        print(f"Merging  : {len(paths)} file(s) → '{title}' ...")
+
+        if args.explore or args.split is not None:
+            subtopics = plan_notes(combined, n=args.split)
+            print(f"Subtopics: {', '.join(subtopics)}")
+            for subtopic in subtopics:
+                print(f"Generating: '{subtopic}' ...")
+                body, tags, _ = digest_subtopic(subtopic, combined, prompt=args.prompt, vault_titles=vault_titles)
+                _write_note(body, tags, subtopic, folder, folder_path)
+        else:
+            body, tags, llm_title = digest_note(combined, prompt=args.prompt, vault_titles=vault_titles)
+            _write_note(body, tags, args.title or llm_title or title, folder, folder_path)
         return
 
     # --- Rework an existing note in place ------------------------------------

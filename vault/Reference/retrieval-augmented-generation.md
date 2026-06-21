@@ -12,7 +12,7 @@ folder: Reference
 
 ## Summary
 
-RAG (Retrieval Augmented Generation) solves the "closed book" limitation of LLMs by dynamically injecting relevant external context into the prompt, enabling accurate answers based on your private documents, code, or notes. Instead of memorizing data via fine-tuning, the system converts documents into vector embeddings, stores them in a database, and retrieves only the necessary chunks during inference to ground the model's response.
+RAG (Retrieval Augmented Generation) solves the "closed book" limitation of [[llm wiki]]s by dynamically injecting relevant external context into the prompt, enabling accurate answers based on your private documents, code, or notes. Instead of memorizing data via fine-tuning, the system converts documents into vector embeddings, stores them in a database, and retrieves only the necessary chunks during inference to ground the model's response.
 
 ## Mental Model
 
@@ -20,7 +20,7 @@ RAG (Retrieval Augmented Generation) solves the "closed book" limitation of LLMs
 - **Analogy:**
   - *Without RAG:* Student takes an exam relying only on what they memorized.
   - *With RAG:* Student takes an open-book exam; they look up references to support their answer.
-- **Stack Position:** Sits between the **Inference Engine** and the **User**, acting as the memory layer.
+- **Stack Position:** Sits between the **[[Local Inference Engines]]** and the **User**, acting as the memory layer.
 
 ## RAG Pipeline
 
@@ -106,9 +106,9 @@ flowchart TD
   - **LangChain / LlamaIndex:** Python frameworks for building custom RAG pipelines; LlamaIndex is often preferred for data-centric RAG.
   - **Haystack:** DeepMind-originated framework, strong for production pipelines.
 - **Typical Developer Stack:**
-  - `Qwen/Llama` → `Ollama` → `Open WebUI` → `RAG over Code/Docs`.
+  - `Qwen/Llama` → `[[Ollama]]` → `Open WebUI` → `RAG over Code/Docs`.
 
-## RAG vs. Fine-Tuning vs. LoRA
+## RAG vs. Fine-Tuning vs. [[Low Rank Adaptation]]
 
 | Feature | RAG | LoRA | Fine-Tuning |
 | :--- | :--- | :--- | :--- |

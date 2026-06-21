@@ -14,7 +14,7 @@ folder: Reference
 Diffusion model assistants are specialized add-ons, adapters, and pipeline tools that extend base image generators like Stable Diffusion or Flux. They enable precise composition control, style consistency, and quality enhancement without requiring full model retraining.
 
 ## Core Adapters & Skill Packs
-- **LoRA (Low-Rank Adaptation)**
+- **LoRA ([[Low Rank Adaptation]])**
   - Injects specific knowledge (characters, art styles, clothing, poses) into a base model
   - Extremely lightweight (100 MB–1 GB) vs. full checkpoint (5–10+ GB)
   - Modifies a small subset of weight matrices, leaving the core architecture intact

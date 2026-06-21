@@ -19,7 +19,7 @@ Model quantization reduces the size of AI models by lowering numerical precision
 *   **What it is:** Compression of model weights from high-precision numbers to lower-precision representations.
 *   **Analogy:** Like converting a lossless WAV audio file to MP3; you lose negligible quality but drastically reduce file size.
 *   **Why it matters:**
-    *   **VRAM Constraints:** Unquantized models require huge VRAM. Quantization brings them within reach of 24GB consumer cards.
+    *   **VRAM Constraints:** Unquantized models require huge [[VRAM with models in the ollama list]]. Quantization brings them within reach of 24GB consumer cards.
     *   **Memory Bandwidth:** Smaller models move data faster, reducing inference latency.
     *   **Source Examples:**
         *   8B Model: ~16 GB → 4–6 GB.
@@ -42,11 +42,11 @@ Model quantization reduces the size of AI models by lowering numerical precision
 
 ## Common Formats & Backends
 
-Different quantization methods optimize for specific hardware or inference engines.
+Different quantization methods optimize for specific hardware or [[Local Inference Engines]].
 
 | Format | Best For | Characteristics |
 | :--- | :--- | :--- |
-| **GGUF** | CPU / GPU Hybrid | • Standard for `llama.cpp` ecosystem.<br>• Supports offloading parts to GPU and parts to RAM.<br>• Used by Ollama, Open WebUI.<br>• **Most versatile for home PCs.** |
+| **GGUF** | CPU / GPU Hybrid | • Standard for `llama.cpp` ecosystem.<br>• Supports offloading parts to GPU and parts to RAM.<br>• Used by [[Ollama]], Open WebUI.<br>• **Most versatile for home PCs.** |
 | **EXL2** | GPU Heavy | • Quantizes weights **and** KV cache.<br>• Maximizes VRAM efficiency.<br>• Requires dedicated GPU focus.<br>• Higher performance on compatible backends. |
 | **AWQ** | Accuracy | • Activation-Aware Weight Quantization.<br>• Protects important weights based on activation patterns.<br>• Often retains better quality at same bit depth vs GPTQ. |
 | **GPTQ** | Compatibility | • Heuristic quantization method.<br>• Mature, widely supported.<br>• Slightly less accurate than AWQ in some cases. |

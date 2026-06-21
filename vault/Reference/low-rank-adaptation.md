@@ -75,7 +75,7 @@ flowchart TD
     - Keep one base model and swap LoRAs for different tasks.
 - **No Catastrophic Forgetting:** Since the base model is frozen, the LoRA doesn't degrade general capabilities.
 
-## LLM Applications
+## LLM Applications [[llm wiki]]
 
 - **Skill Injection:**
     - 🛠️ Better coding or specific language support.
@@ -89,7 +89,7 @@ flowchart TD
     - Multiple LoRAs can be combined.
     - *Example:* Base + Coding LoRA + JSON-Format LoRA = Structured code generator.
 
-## Image Generation Applications
+## Image Generation Applications [[Diffusion Model Assistants]]
 
 - **Style & Subject Control:**
     - 🎨 Art styles (Anime, Oil painting, Cyberpunk).
@@ -103,7 +103,7 @@ flowchart TD
 
 ## LoRA vs. Alternatives
 
-| Feature | LoRA | Full Fine-Tune | RAG |
+| Feature | LoRA | Full Fine-Tune | RAG [[Retrieval Augmented Generation]] |
 | :--- | :--- | :--- | :--- |
 | **File Size** | Tiny (MBs) | Huge (GBs/TBs) | Depends on docs |
 | **Training Cost** | Low | High | None (Retrieval) |
@@ -132,12 +132,12 @@ flowchart TD
 > If training data is too small or repetitive, the LoRA may memorize examples rather than learn the pattern. This leads to poor generalization outside the training set.
 
 > [!TIP] GGUF Integration
-> In tools like `llama.cpp` or `Ollama`, LoRAs can be baked into a GGUF file for a single file distribution, or loaded dynamically if the software supports multiple LoRA paths. Dynamic loading saves RAM by keeping only the base model resident.
+> In tools like `llama.cpp` [[Local Inference Engines]] or `Ollama` [[Ollama]], LoRAs can be baked into a GGUF [[Model Quantization]] file for a single file distribution, or loaded dynamically if the software supports multiple LoRA paths. Dynamic loading saves RAM [[VRAM with models in the ollama list]] by keeping only the base model resident.
 
 ## Practical Tips
 
 - **Curate Data:** Quality matters more than quantity. Clean, diverse datasets prevent overfitting.
 - **Start Small:** Test with lower ranks before committing to large training runs.
 - **Blend LoRAs:** In image gen, use weighting syntax (e.g., `lora:style:0.7, lora:char:0.5`) to balance influences.
-- **Verify Source:** Download LoRAs from trusted repositories to avoid poisoned adapters or malicious code injections.
+- **Verify Source:** Download LoRAs from trusted repositories [[Huggingface, Civitai and ModelScope, brief overview, how they work, tips and tricks]] to avoid poisoned adapters or malicious code injections.
 - **Monitor Metrics:** Watch training loss curves; a sharp drop followed by noise often indicates overfitting.

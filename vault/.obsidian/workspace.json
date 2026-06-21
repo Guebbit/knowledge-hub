@@ -187,8 +187,10 @@
       "mermaid-tools:Open Mermaid Toolbar": false
     }
   },
-  "active": "20d8566c4319c17f",
+  "active": "cb2fc02b47dca190",
   "lastOpenFiles": [
+    "Inbox/langchain-framework-notes.md",
+    "Inbox/low-rank-adaptation-guide.md",
     "Guides/graphify.md",
     "Guides/llm-wiki.md",
     "Guides/llm-vram.md",

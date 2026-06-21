@@ -11,7 +11,7 @@ folder: Inbox
 ---
 
 ## Summary
-Ollama is a lightweight, open-source tool that allows you to run large language models (LLMs) locally on your computer without complex setup. It simplifies downloading, managing, and interacting with models like Llama 3, Mistral, and others via a command-line interface or API.
+Ollama is a lightweight, open-source tool that allows you to run large language models ([[llm wiki]]) locally on your computer without complex setup. It simplifies downloading, managing, and interacting with models like Llama 3, Mistral, and others via a command-line interface or API.
 
 ## Key Features
 - Runs LLMs locally on CPU/GPU with automatic resource management and acceleration.
@@ -50,7 +50,7 @@ mindmap
 - `FROM`: Specifies the base model to use.
 - `SYSTEM`: Sets the system prompt or context instructions.
 - `PARAMETER`: Adjusts inference settings like `temperature`, `num_ctx`, and `top_k`.
-- `ADAPTER`: Apply LoRA or other adapter layers for fine-tuning.
+- `ADAPTER`: Apply [[Low Rank Adaptation]] or other adapter layers for fine-tuning.
 - Create custom configurations via `ollama create <name> -f Modelfile`.
 
 ## API & Integration
@@ -61,11 +61,11 @@ mindmap
 - OpenAI-compatible endpoint allows drop-in replacement in existing applications.
 - Supports streaming responses for real-time output.
 - Easy integration with Python, JavaScript, and other languages via HTTP requests or client libraries.
-- Useful for building local chatbots, RAG pipelines, and AI agents.
+- Useful for building local chatbots, [[Retrieval Augmented Generation]] pipelines, and [[AI Agent Workflows]].
 
 ## Best Practices
 
-> [!TIP] Use `Q4_K_M` quantization by default — best balance of quality, speed, and VRAM for consumer GPUs.
+> [!TIP] Use `Q4_K_M` [[Model Quantization]] by default — best balance of quality, speed, and [[VRAM with models in the ollama list]] for consumer GPUs.
 
 > [!TIP] Set `OLLAMA_MODELS` to a drive with more space before pulling large models (they can be 20–40 GB).
 
