@@ -1,0 +1,74 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    # how long Podman waits before forcing shutdown with SIGKILL; adjust if you have very large models that need more time to unload
+    # Default is SIGTERM which is graceful but may hang
+    stop_signal: SIGKILL
+    stop_grace_period: 5s
+    ports:
+      - '${OLLAMA_PORT:-11434}:${OLLAMA_PORT:-11434}'
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics
+      # Limit threads so the host stays responsive; tune to taste
+      OLLAMA_NUM_THREADS: ${OLLAMA_NUM_THREADS:-1}
+      # Keep models loaded for 5 minutes after the last request
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-5m}
+      # Global context length for all models.
+      # Match this to OLLAMA_CONTEXT_WINDOW in .env.
+      # Safe for 24 GB VRAM (RTX 4090) with 8B–14B models.
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-32000}
+    volumes:
+      # Shared model cache — host path so models survive container rebuilds.
+      # Treat as read-only from the host; writes happen inside the container.
+      - /home/${LINUX_USERNAME}/.ollama:/root/.ollama:z,rw
+      # Container-specific temp / cache
+      - ollama-data:/root/.ollama-data:rw,Z,rprivate
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'nvidia-smi || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Resource limits — adjust to your hardware (machine has 32 GB RAM / 16 cores)
+    mem_limit: 16g
+    shm_size: 8g
+    cpus: '8.0'
+    devices:
+      - nvidia.com/gpu=all
+    security_opt:
+      - label=disable
+
+
+  scripts:
+    build:
+      context: .
+      dockerfile: Dockerfile.scripts
+    # No persistent container — invoked via: docker compose run --rm scripts python /scripts/main.py ...
+    # The 2brain.sh wrapper handles this automatically.
+    volumes:
+      - ./vault:/vault:rw
+      - ./scripts:/scripts:ro
+      - /home/${LINUX_USERNAME}/.models:/models:z,rw
+    environment:
+      VAULT_PATH: /vault
+      MODELS_PATH: /models
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      DEFAULT_PRESET: ${DEFAULT_PRESET:-local}
+      PRESET_LOCAL: ${PRESET_LOCAL:-ollama:qwen3:8b}
+      PRESET_BIG: ${PRESET_BIG:-ollama:qwen3.6:27B}
+      PRESET_SMART: ${PRESET_SMART:-anthropic:claude-sonnet-4-6}
+      PRESET_CHEAP: ${PRESET_CHEAP:-openai:gpt-4o-mini}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+    depends_on:
+      - ollama
+
+
+volumes:
+  ollama-data:
+    driver: local
