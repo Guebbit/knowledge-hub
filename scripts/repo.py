@@ -76,7 +76,7 @@ def _run_graphify(repo_path: str, provider: str, model: str, update: bool) -> No
 
     print(
         "Scan     : graphify honors .gitignore/.graphifyignore and skips common heavy dirs "
-        "(node_modules, dist, build, .next, ...)"
+        "(node_modules, dist, build, .next, ...)."
     )
     print(f"Graphify : {'update' if update else 'extract'}  backend={backend}  model={model}")
     result = subprocess.run(cmd, cwd=repo_path)
