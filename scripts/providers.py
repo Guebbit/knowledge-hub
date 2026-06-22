@@ -19,10 +19,32 @@ from utils import die
 
 def call_llm(prompt: str) -> str:
     """Dispatch the prompt to the configured provider and return the response."""
-    # _ADAPTERS.get() looks up the function for the current provider.
-    # Falls back to _call_ollama if the provider name is unrecognised.
     adapter = _ADAPTERS.get(config.PROVIDER, _call_ollama)
     return adapter(prompt)
+
+
+def _fallback_to_local(reason: str) -> bool:
+    """Warn about a missing credential and offer to fall back to the local preset."""
+    import sys
+    fallback_provider, fallback_model = config.PRESETS.get("local", ("ollama", "qwen3:8b"))
+    print(f"\nWarning  : {reason}")
+    if not sys.stdin.isatty():
+        # Non-interactive (piped / CI): auto-fall back without prompting.
+        print(f"Auto     : falling back to {fallback_provider}:{fallback_model}")
+        config.PROVIDER = fallback_provider
+        config.MODEL = fallback_model
+        return True
+    try:
+        answer = input(f"Use local fallback ({fallback_provider}:{fallback_model}) instead? [Y/n] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if answer in ("", "y", "yes"):
+        config.PROVIDER = fallback_provider
+        config.MODEL = fallback_model
+        print(f"Switched : using {fallback_provider}:{fallback_model}")
+        return True
+    return False
 
 
 # --- Adapters ----------------------------------------------------------------
@@ -59,6 +81,8 @@ def _call_anthropic(prompt: str) -> str:
 
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
+        if _fallback_to_local("ANTHROPIC_API_KEY not set — add it to .env"):
+            return _call_ollama(prompt)
         die("ANTHROPIC_API_KEY not set — add it to .env")
 
     client = anthropic.Anthropic(api_key=key)
@@ -79,9 +103,12 @@ def _call_openai(prompt: str) -> str:
 
     key = os.getenv("OPENAI_API_KEY")
     if not key:
+        if _fallback_to_local("OPENAI_API_KEY not set — add it to .env"):
+            return _call_ollama(prompt)
         die("OPENAI_API_KEY not set — add it to .env")
 
-    client = OpenAI(api_key=key)
+    base_url = os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+    client = OpenAI(api_key=key, base_url=base_url)
     res = client.chat.completions.create(
         model=config.MODEL,
         messages=[{"role": "user", "content": prompt}],

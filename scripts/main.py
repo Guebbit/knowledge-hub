@@ -115,8 +115,8 @@ def _write_note(content: str, tags: list[str], title: str, folder: str, folder_p
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create a structured Obsidian note via AI")
 
-    # nargs="?" makes this positional argument optional (0 or 1 values allowed)
-    parser.add_argument("topic", nargs="?", help="What to write a note about")
+    # nargs="*" — zero or more positional args; multiple = chain mode (one note per topic)
+    parser.add_argument("topic", nargs="*", help="What to write a note about; pass multiple to create one note per topic")
 
     # choices= restricts accepted values — argparse rejects anything not in the list
     # default=None so --relink-all can detect "no -f given" and scan the whole vault
@@ -151,7 +151,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if not args.rework and not args.relink and not args.relink_all and not args.from_file and not args.topic and not args.merge:
-        parser.error("provide a topic, --from-file, --rework, --relink, --relink-all, or --merge")
+        parser.error("provide a topic (or multiple topics to chain), --from-file, --rework, --relink, --relink-all, or --merge")
 
     _apply_preset(args)
     print(f"Provider : {config.PROVIDER}  |  Model: {config.MODEL}")
@@ -248,6 +248,39 @@ def main() -> None:
         src.write_text(build_frontmatter(args.title or llm_title or title, tags, folder) + body)
         print(f"Done     : {src}")
         return  # stop here — skip the normal note-creation flow below
+
+    # --- Chain mode (multiple positional topics) --------------------------------
+
+    if args.topic and len(args.topic) > 1:
+        folder = args.folder or "Inbox"
+        folder_path = VAULT_PATH / folder
+        folder_path.mkdir(parents=True, exist_ok=True)
+        if args.link:
+            vault_titles = list(_build_vault_index().values())
+            print(f"Linking  : vault index loaded ({len(vault_titles)} notes)")
+        else:
+            vault_titles = None
+        print(f"Target   : {folder_path}")
+        print(f"Chain    : {len(args.topic)} topics")
+        for i, t in enumerate(args.topic, 1):
+            print(f"\n[{i}/{len(args.topic)}] '{t}' ...")
+            if args.explore or args.split is not None:
+                subtopics = plan_notes(t, n=args.split)
+                print(f"Subtopics: {', '.join(subtopics)}")
+                for subtopic in subtopics:
+                    print(f"Generating: '{subtopic}' ...")
+                    if args.no_context:
+                        body, tags, _ = generate_note(subtopic, vault_titles=vault_titles)
+                    else:
+                        body, tags, _ = generate_note_with_context(subtopic, t, vault_titles=vault_titles)
+                    _write_note(body, tags, subtopic, folder, folder_path)
+            else:
+                body, tags, llm_title = generate_note(t, vault_titles=vault_titles)
+                _write_note(body, tags, llm_title or t, folder, folder_path)
+        return
+
+    # Normalize to a plain string for the single-topic flow below
+    args.topic = args.topic[0] if args.topic else None
 
     # --- Resolve source and title --------------------------------------------
 

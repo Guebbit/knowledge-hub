@@ -70,7 +70,8 @@
               "title": "Bookmarks"
             }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "horizontal",
@@ -159,7 +160,7 @@
             }
           },
           {
-            "id": "08043c680a973a5a",
+            "id": "a401b15502d8c074",
             "type": "leaf",
             "state": {
               "type": "mermaid-toolbar-view",
@@ -187,34 +188,40 @@
       "mermaid-tools:Open Mermaid Toolbar": false
     }
   },
-  "active": "cb2fc02b47dca190",
+  "active": "20d8566c4319c17f",
   "lastOpenFiles": [
-    "Inbox/langchain-framework-notes.md",
-    "Inbox/low-rank-adaptation-guide.md",
-    "Guides/graphify.md",
-    "Guides/llm-wiki.md",
+    "Untitled 2.canvas",
+    "2026-06-22.md",
+    "Untitled 1.canvas",
     "Guides/llm-vram.md",
-    "Guides/llm-platforms.md",
-    "Reference/ollama.md",
-    "Guides/LLM Platforms.md",
-    "Reference/diffusion-model-assistants.md",
-    "Reference/ai-agent-workflows.md",
-    "Reference/retrieval-augmented-generation.md",
-    "Reference/low-rank-adaptation.md",
-    "Reference/local-inference-engines.md",
-    "Reference/model-quantization.md",
+    "Inbox/aws-core-concepts.md",
+    "Inbox/azure-openai-essentials.md",
+    "Reference/firebase-core-overview.md",
+    "Reference/sqlite-essentials-mysql-comparison.md",
+    "Reference/postgresql-overview.md",
+    "Reference/open-source-backend-stack.md",
+    "Reference/event-driven-web-architecture.md",
+    "Reference/microservices-architecture-overview.md",
+    "Reference/backend-as-a-service-essentials.md",
+    "Reference/vue-3-static-site-generation.md",
+    "Reference/vue-3-server-rendering.md",
+    "Reference/vue3-password-protection-patterns.md",
+    "Inbox/css-essentials.md",
+    "Inbox/typescript-essentials.md",
+    "Reference/nuxt-full-stack-framework.md",
+    "Reference/vue-3-core-concepts.md",
+    "Guides/ollama.md",
+    "Reference/container-runtime-comparison.md",
+    "Guides/kubernetes-core-concepts.md",
+    "Guides/langchain-framework-notes.md",
+    "Inbox/container-runtime-comparison.md",
+    "Inbox/kubernetes-core-concepts.md",
+    "Inbox/langchain-framework-notes.md",
     "Untitled.base",
-    "2026-06-21.md",
     "Untitled.canvas",
-    "Reference/Ollama.md",
-    "Guides/Graphify.md",
-    "Guides/LLM-wiki.md",
-    "Guides/LLM VRAM.md",
     "Inbox/ollama.md.tmp.89390.8a5bd333cb5d",
     "Guides/vram-with-models-in-the-ollama-list.md.tmp.89390.c5ffb939eb9b",
     "Guides/llm-wiki.md.tmp.89390.6aa4ef9948ac",
-    "Guides/graphify.md.tmp.89390.f90532ff216e",
-    "drafts/graphify.md",
-    "drafts/llm-wiki.md"
+    "Guides/graphify.md.tmp.89390.f90532ff216e"
   ]
 }

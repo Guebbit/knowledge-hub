@@ -10,6 +10,106 @@ No cloud. No subscriptions. Runs locally.
 
 ---
 
+## The idea
+
+This system has three pieces. Each one solves a specific memory problem.
+
+### The problem: ADHD + code + knowledge = context loss
+
+Working memory is limited. With ADHD it's even more limited. Two things keep happening:
+
+- **You learn something** → don't write it down → forget it in a week → learn it again
+- **You open a repo** → spend 30 minutes reading files just to remember what it does → then your attention is gone
+
+This system externalizes both problems.
+
+---
+
+### Piece 1 — Second brain (Obsidian + `2brain`)
+
+**What it is:** a personal knowledge base that grows automatically as you learn things.
+
+**How it works:** you type `2brain "what I just figured out"` → AI writes a clean, structured note → it appears in Obsidian instantly.
+
+**Why it matters for ADHD:**
+- Zero friction: one command, no decisions about format or where to save it
+- Always the same structure: every note looks identical, so your brain doesn't have to re-learn how to read them
+- Searchable forever: Obsidian's graph connects notes by topic — ideas you linked years ago resurface when relevant
+- Offloads working memory: once it's written, you don't need to hold it in your head anymore
+
+> Think of Obsidian as your external hard drive for knowledge. `2brain` is the "save" button.
+
+---
+
+### Piece 2 — graphify (`2repo --graph` → `knowledge-graph.md`)
+
+**What it is:** a single AI-generated file that summarizes an entire codebase and lives inside that repo.
+
+**How it works:** `2repo ~/Work/my-repo` reads the repo, calls the AI, writes `knowledge-graph.md` at the repo root. Claude Code automatically loads it at session start.
+
+**Why it matters:**
+
+When you open a project in Claude Code (or any AI assistant), the AI starts cold — it knows nothing about your codebase. It has to read dozens of files to understand the structure, burning through its context window before you've asked a single question.
+
+With `knowledge-graph.md`, the AI starts every session already knowing:
+- What the repo does (purpose)
+- Which files do what (key files table)
+- How modules depend on each other (Mermaid diagram)
+- What conventions to follow and what to avoid
+
+One file. Zero wasted context. The AI is useful from the first message.
+
+**For humans too:** open `knowledge-graph.md` and understand any repo in 30 seconds — no need to read 50 files.
+
+---
+
+### Piece 3 — llm-wiki (`2repo --wiki` → Obsidian)
+
+**What it is:** an AI-generated wiki for a codebase that lives in your Obsidian vault, cross-linked with your other notes.
+
+**How it works:** `2repo ~/Work/my-repo` also generates `vault/Projects/my-repo/` with multiple notes: index, architecture, setup guide, module diagrams, component deep-dives.
+
+**Why it matters for ADHD:**
+
+Coming back to a project after weeks away means re-reading everything. With ADHD, that re-reading costs real time and attention — and the context still doesn't fully load.
+
+With the llm-wiki in Obsidian:
+- Open `index.md` → instant overview, what this repo does, how to run it
+- Open `architecture.md` → why things are structured the way they are
+- Open `setup.md` → exact commands to get it running again
+- Follow `[[wikilinks]]` to related notes from your second brain
+
+The project becomes a first-class citizen in your Obsidian graph, connected to your personal notes, research, and decisions about it.
+
+---
+
+### How all three fit together
+
+```
+YOUR BRAIN (ADHD)
+│
+│  learns something  →  2brain "what I learned"
+│                              │
+│                              └── vault/Inbox/what-i-learned.md
+│                                          │
+│                                   Obsidian graph view
+│                                   connects it to everything else
+│
+│  opens a repo      →  2repo ~/Work/my-repo
+│                              │
+│                              ├── knowledge-graph.md  ← AI assistant starts here
+│                              │
+│                              └── vault/Projects/my-repo/
+│                                          │
+│                                   index, architecture, setup,
+│                                   diagrams — all in Obsidian,
+│                                   linked to your personal notes
+```
+
+**One rule:** every time you learn something or start working on a repo, run the command. Never decide what to write or how to format it. The AI does that. You just capture and move on.
+
+---
+
 ## What lives where
 
 This is important to understand once, then you never have to think about it again.
@@ -166,6 +266,7 @@ Add this to your `nano ~/.zshrc` or `nano ~/.bashrc` (use `echo $SHELL` to know 
 ```bash
 export KNOWLEDGE_HUB="$HOME/knowledge-hub"   # WARNING: adjust path if different
 alias 2brain="$KNOWLEDGE_HUB/scripts/2brain.sh"
+alias 2repo="$KNOWLEDGE_HUB/scripts/2repo.sh"
 ```
 
 
@@ -311,6 +412,36 @@ Instead of one note, the AI plans a set of focused subtopics and generates a not
 
 Each note lands in the same target folder. The subtopic plan is printed before generation starts so you can see what's coming.
 
+### Chain mode — one note per topic
+
+Pass multiple topics in one command — each gets its own AI call and its own note.
+
+```bash
+2brain "Docker networking" "Kubernetes pods" "Helm charts" -f Guides
+2brain "JWT" "OAuth2" "PKCE" -f Reference
+2brain "git rebase" "git stash" "git bisect"
+```
+
+Progress is printed as each note completes:
+
+```
+Chain    : 3 topics
+[1/3] 'Docker networking' ...
+Created  : vault/Guides/docker-networking.md
+[2/3] 'Kubernetes pods' ...
+Created  : vault/Guides/kubernetes-pods.md
+[3/3] 'Helm charts' ...
+Created  : vault/Guides/helm-charts.md
+```
+
+Combine with `--explore` to also split each topic into subtopic notes:
+
+```bash
+2brain "Networking" "Storage" "Security" --explore -f Guides
+```
+
+---
+
 ### Link notes together with `--link`, `--relink`, `--relink-all`
 
 Obsidian has a **graph view** (`Ctrl+G`) that draws a map of your notes as dots connected by lines. For two notes to be connected, one note must contain a `[[wikilink]]` that references the other note by title. Without links, the graph is a bunch of isolated dots and Obsidian's search and navigation features are much weaker.
@@ -382,6 +513,32 @@ Rewrites a note already in the vault — same file, same path, overwritten in pl
 
 ---
 
+### Merge existing notes with `--merge`
+
+Combines two or more files into one clean, deduplicated note. Useful when you captured the same topic multiple times and ended up with duplicate or overlapping notes.
+
+```bash
+2brain --merge vault/Inbox/lora.md vault/Reference/lora.md -f Reference
+2brain --merge vault/Inbox/lora.md vault/Reference/lora.md -f Reference --title "Low-rank Adaptation"
+```
+
+Folder and title default to the frontmatter of the first file if not specified. The AI deduplicates, reorganizes, and produces one clean output.
+
+**Merge and immediately split into multiple notes:**
+
+If the combined content is dense enough to split into focused subtopics, add `--explore` or `--split`:
+
+```bash
+2brain --merge notes1.md notes2.md notes3.md --explore -f Reference
+2brain --merge notes1.md notes2.md --split 3 -f Guides
+```
+
+**Single file:** passing one path is equivalent to `--from-file` — it just digests and produces one note.
+
+> The source files are not deleted automatically. Remove them manually once you are happy with the merged result.
+
+---
+
 ## Practical examples
 
 **You just spent 2 hours debugging something:**
@@ -409,6 +566,94 @@ Rewrites a note already in the vault — same file, same path, overwritten in pl
 2brain "git commands I always forget" -f Reference
 2brain "docker compose cheat sheet" -f Reference
 ```
+
+## 2repo — understand and document any codebase
+
+`2repo` is a sibling command to `2brain` focused on codebases.
+One command: reads a repo, calls the AI, writes two outputs:
+
+- **`knowledge-graph.md`** in the target repo — lets Claude Code load the full codebase context at session start without reading dozens of files
+- **`vault/Projects/<repo-name>/`** in Obsidian — human-readable wiki with architecture, setup, and diagrams
+
+```
+2repo ~/Work/my-repo  →  knowledge-graph.md + Obsidian wiki
+```
+
+### Basic usage
+
+```bash
+# Full run: graph + wiki (default — deep scan, falls back to medium)
+2repo ~/Work/my-repo
+
+# Graph only (token-saver for Claude Code)
+2repo ~/Work/my-repo --graph
+
+# Wiki only (Obsidian reference)
+2repo ~/Work/my-repo --wiki
+
+# Control scan depth
+2repo ~/Work/my-repo --shallow    # file tree + README + manifests (~3k tokens)
+2repo ~/Work/my-repo --medium     # + configs + entry points + Docker (~15k tokens)
+2repo ~/Work/my-repo --deep       # + all source files (~80k+ tokens)
+
+# Override AI preset for this run
+2repo ~/Work/my-repo --preset smart
+
+# Wiki in a different vault folder (default: Projects)
+2repo ~/Work/my-repo --wiki -f Reference
+
+# Staleness check — no AI call, instant
+2repo ~/Work/my-repo --check
+
+# Install a post-commit hook that warns when the graph may be stale
+2repo ~/Work/my-repo --install-hook
+```
+
+### What gets generated
+
+**In the target repo:**
+
+```
+my-repo/
+├── knowledge-graph.md        ← the graph (commit this — it's documentation)
+├── CLAUDE.md                 ← @knowledge-graph.md injected with markers
+└── .claude/
+    ├── KNOWLEDGE.md          ← @../knowledge-graph.md (Claude Code auto-load)
+    └── wiki.md               ← pointer back to vault wiki
+```
+
+**In Obsidian vault (`vault/Projects/my-repo/`):**
+
+| Depth   | Notes created |
+|---------|--------------|
+| shallow | `index.md` only |
+| medium  | `index.md` + `graph.md` + `architecture.md` + `setup.md` |
+| deep    | all above + one note per key module (`components/`) |
+
+### Staleness detection
+
+The graph file stores a fingerprint when generated:
+
+```
+<!-- 2repo:generated | date: 2026-06-21 | repo: my-repo | files: 47 | hash: a3f8c2 -->
+```
+
+Three layers to detect when it's out of date:
+
+1. **Embedded hash** — always present, zero cost to check
+2. **`--check`** — recomputes hash instantly, no AI call
+3. **`--install-hook`** — post-commit hook prints a warning when `REPO_STALE_THRESHOLD` files have changed (default: 5)
+
+### 2repo configuration (`.env`)
+
+| Variable | Default | What it does |
+|---|---|---|
+| `REPO_PRESET_SHALLOW` | `local` | Preset used for shallow scans |
+| `REPO_PRESET_MEDIUM` | `local` | Preset used for medium scans |
+| `REPO_PRESET_DEEP` | `smart` | Preset used for deep scans (needs large context) |
+| `REPO_STALE_THRESHOLD` | `5` | Files-changed threshold for the stale hook warning |
+
+---
 
 ## Using a paid AI provider
 

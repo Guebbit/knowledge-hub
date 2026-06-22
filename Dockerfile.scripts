@@ -11,4 +11,6 @@ RUN pip install --no-cache-dir \
     openai \
     faster-whisper \
     pypdf \
-    beautifulsoup4
+    beautifulsoup4 \
+    pathspec \
+    graphifyy
