@@ -17,8 +17,10 @@ Outputs written to the target repo:
   CLAUDE.md                      — injected @graphify-out/GRAPH_REPORT.md block
 
 Wiki output (--wiki):
-  vault/Projects/<repo-name>/   — Obsidian atomic pages (see repo_wiki.py)
-  <repo>/wiki/                  — plain markdown clone (see repo_wiki.py)
+  graphify-out/wiki/             — graphify native wiki export
+  graphify-out/obsidian/         — graphify native obsidian export
+  <repo>/wiki/                   — plain markdown clone (from graphify-out/wiki)
+  vault/Projects/<repo-name>/    — Obsidian clone (from graphify-out/obsidian)
 """
 import argparse
 import os
@@ -72,6 +74,10 @@ def _run_graphify(repo_path: str, provider: str, model: str, update: bool) -> No
         if provider == "ollama":
             cmd.extend(["--max-concurrency", "1"])
 
+    print(
+        "Scan     : graphify honors .gitignore/.graphifyignore and skips common heavy dirs "
+        "(node_modules, dist, build, .next, ...)"
+    )
     print(f"Graphify : {'update' if update else 'extract'}  backend={backend}  model={model}")
     result = subprocess.run(cmd, cwd=repo_path)
     if result.returncode != 0:
