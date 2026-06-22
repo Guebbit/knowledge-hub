@@ -53,7 +53,7 @@ _STALE_EXCLUDES = [
     ":(exclude)CLAUDE.md",
     ":(exclude)wiki/**",
 ]
-_PORCELAIN_PATH_OFFSET = 3
+_PORCELAIN_STATUS_AND_SPACE_LENGTH = 3
 
 
 def _resolve_preset(name: str | None) -> tuple[str, str]:
@@ -210,13 +210,13 @@ def _is_generated_path(path: str) -> bool:
 
 def _changed_files_since(repo_path: str, base_commit: str) -> set[str]:
     changed: set[str] = set()
-    diff_out = _git_output(repo_path, ["diff", "--name-only", f"{base_commit}..HEAD", "--", ".", *_STALE_EXCLUDES])
+    diff_out = _git_output(repo_path, ["diff", "--name-only", f"{base_commit}..HEAD", "--", *_STALE_EXCLUDES])
     if diff_out:
         changed.update(p for p in diff_out.splitlines() if p and not _is_generated_path(p))
 
     status = _git_capture(
         repo_path,
-        ["status", "--porcelain", "-z", "--untracked-files=normal", "--", ".", *_STALE_EXCLUDES],
+        ["status", "--porcelain", "-z", "--untracked-files=normal", "--", *_STALE_EXCLUDES],
     )
     if status.returncode == 0 and status.stdout:
         entries = status.stdout.split("\0")
@@ -227,7 +227,7 @@ def _changed_files_since(repo_path: str, base_commit: str) -> set[str]:
                 i += 1
                 continue
             code = entry[:2]
-            path = entry[_PORCELAIN_PATH_OFFSET:] if len(entry) > _PORCELAIN_PATH_OFFSET else ""
+            path = entry[_PORCELAIN_STATUS_AND_SPACE_LENGTH:] if len(entry) > _PORCELAIN_STATUS_AND_SPACE_LENGTH else ""
             i += 1
             # In -z mode, rename/copy stores old path in this entry and new path in the next one.
             if (code[0] in {"R", "C"} or code[1] in {"R", "C"}) and i < len(entries):
@@ -287,7 +287,7 @@ if ! git cat-file -e "${{base_commit}}^{{commit}}" 2>/dev/null; then
   exit 0
 fi
 
-changed="$(git diff --name-only "${{base_commit}}"..HEAD -- . \\
+changed="$(git diff --name-only "${{base_commit}}"..HEAD -- \\
 {_hook_excludes_block()}
   | sed '/^$/d' | wc -l)"
 threshold="{threshold}"
