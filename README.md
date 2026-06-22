@@ -633,7 +633,7 @@ graphify-out/.2repo-state.json
 Staleness is computed from changed files since that baseline commit using `git diff` (committed changes) plus `git status` (staged, unstaged, untracked changes), while excluding generated outputs such as `graphify-out/`, `.claude/`, `CLAUDE.md`, and `wiki/`.
 
 1. **`--check`** — prints fresh/stale status and changed-file count, no AI call
-2. **`--install-hook`** — installs a post-commit warning when changed files reach `REPO_STALE_THRESHOLD` (default: 5)
+2. **`--install-hook`** — installs a post-commit warning based on committed changes when they reach `REPO_STALE_THRESHOLD` (default: 5)
 
 ### 2repo configuration (`.env`)
 
