@@ -33,37 +33,15 @@ def generate(repo_path: str, folder: str = "Projects") -> None:
     allowed_roots = (repo.resolve(), config.VAULT_PATH.resolve())
 
     print(f"Wiki     : graphify export wiki (default -> {wiki_out})")
-    try:
-        subprocess.run(
-            ["graphify", "export", "wiki"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        print(f"Wiki     : graphify export wiki failed with code {exc.returncode}")
-        if exc.stdout:
-            print(exc.stdout.strip())
-        if exc.stderr:
-            print(exc.stderr.strip())
+    if not _run_graphify_export(["graphify", "export", "wiki"], repo, "wiki"):
         return
 
     print("Wiki     : graphify export obsidian")
-    try:
-        subprocess.run(
-            ["graphify", "export", "obsidian", "--dir", str(obsidian_out)],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        print(f"Wiki     : graphify export obsidian failed with code {exc.returncode}")
-        if exc.stdout:
-            print(exc.stdout.strip())
-        if exc.stderr:
-            print(exc.stderr.strip())
+    if not _run_graphify_export(
+        ["graphify", "export", "obsidian", "--dir", str(obsidian_out)],
+        repo,
+        "obsidian",
+    ):
         return
 
     if _mirror_dir(wiki_out, repo_wiki_out, allowed_roots):
@@ -97,5 +75,25 @@ def _mirror_dir(src: Path, dst: Path, allowed_roots: tuple[Path, ...]) -> bool:
         shutil.copytree(src, dst)
     except OSError as exc:
         print(f"Wiki     : failed to copy directory {src} -> {dst}: {exc}")
+        return False
+    return True
+
+
+def _run_graphify_export(command: list[str], repo: Path, export_name: str) -> bool:
+    """Run a graphify export command and print failures consistently."""
+    try:
+        subprocess.run(
+            command,
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print(f"Wiki     : graphify export {export_name} failed with code {exc.returncode}")
+        if exc.stdout:
+            print(exc.stdout.strip())
+        if exc.stderr:
+            print(exc.stderr.strip())
         return False
     return True

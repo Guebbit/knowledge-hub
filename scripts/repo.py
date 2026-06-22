@@ -314,7 +314,6 @@ def main() -> None:
                         help="Check if graph is stale based on changed files since last generation")
     parser.add_argument("--install-hook", action="store_true",
                         help="Install a post-commit hook that warns when graph may be stale")
-    parser.add_argument("--hook", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--preset", metavar="NAME",
                         help="Override REPO_PRESET_GRAPH (e.g. smart, local, big)")
     parser.add_argument("-f", "--folder", default="Projects",
@@ -324,9 +323,6 @@ def main() -> None:
     if not Path(args.repo).is_dir():
         die(f"not a directory: {args.repo}")
 
-    if args.hook:
-        print("Warning  : --hook is deprecated; use --install-hook")
-        args.install_hook = True
     if args.check:
         sys.exit(_check(args.repo))
     if args.install_hook:
