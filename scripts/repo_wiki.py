@@ -79,7 +79,7 @@ def _mirror_dir(src: Path, dst: Path, allowed_roots: tuple[Path, ...]) -> bool:
     return True
 
 
-def _run_graphify_export(command: list[str], repo: Path, export_name: str) -> bool:
+def _run_graphify_export(command: list[str], repo: Path, export_type: str) -> bool:
     """Run a graphify export command and print failures consistently."""
     try:
         subprocess.run(
@@ -90,7 +90,7 @@ def _run_graphify_export(command: list[str], repo: Path, export_name: str) -> bo
             check=True,
         )
     except subprocess.CalledProcessError as exc:
-        print(f"Wiki     : graphify export {export_name} failed with code {exc.returncode}")
+        print(f"Wiki     : graphify export {export_type} failed with code {exc.returncode}")
         if exc.stdout:
             print(exc.stdout.strip())
         if exc.stderr:

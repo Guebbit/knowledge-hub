@@ -46,13 +46,14 @@ _BACKEND_MAP = {
 _MARKER_START = "<!-- 2repo:start — regenerate with: 2repo . -->"
 _MARKER_END   = "<!-- 2repo:end -->"
 _INJECTION    = f"{_MARKER_START}\n@graphify-out/GRAPH_REPORT.md\n{_MARKER_END}"
-_STATE_FILE_RELATIVE_PATH = Path("graphify-out/.2repo-state.json")
+_STATE_FILE_SUBPATH = Path("graphify-out/.2repo-state.json")
 _STALE_EXCLUDES = [
     ":(exclude)graphify-out/**",
     ":(exclude).claude/**",
     ":(exclude)CLAUDE.md",
     ":(exclude)wiki/**",
 ]
+_PORCELAIN_PATH_OFFSET = 3
 
 
 def _resolve_preset(name: str | None) -> tuple[str, str]:
@@ -130,7 +131,12 @@ def _inject_claude(repo_path: str) -> None:
 
 
 def _repo_state_file(repo_path: str) -> Path:
-    return Path(repo_path) / _STATE_FILE_RELATIVE_PATH
+    return Path(repo_path) / _STATE_FILE_SUBPATH
+
+
+def _hook_excludes_block() -> str:
+    """Return shell lines for git pathspec excludes used in post-commit hook."""
+    return "\n".join(f"  '{exclude}' \\" for exclude in _STALE_EXCLUDES)
 
 
 def _git_capture(repo_path: str, args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -221,7 +227,7 @@ def _changed_files_since(repo_path: str, base_commit: str) -> set[str]:
                 i += 1
                 continue
             code = entry[:2]
-            path = entry[3:] if len(entry) > 3 else ""
+            path = entry[_PORCELAIN_PATH_OFFSET:] if len(entry) > _PORCELAIN_PATH_OFFSET else ""
             i += 1
             # In -z mode, rename/copy stores old path in this entry and new path in the next one.
             if (code[0] in {"R", "C"} or code[1] in {"R", "C"}) and i < len(entries):
@@ -282,10 +288,8 @@ if ! git cat-file -e "${{base_commit}}^{{commit}}" 2>/dev/null; then
 fi
 
 changed="$(git diff --name-only "${{base_commit}}"..HEAD -- . \\
-  ':(exclude)graphify-out/**' \\
-  ':(exclude).claude/**' \\
-  ':(exclude)CLAUDE.md' \\
-  ':(exclude)wiki/**' | sed '/^$/d' | wc -l)"
+{_hook_excludes_block()}
+  | sed '/^$/d' | wc -l)"
 threshold="{threshold}"
 
 if [[ "${{threshold}}" -gt 0 && "${{changed}}" -ge "${{threshold}}" ]]; then
