@@ -55,17 +55,21 @@ def _fallback_to_local(reason: str) -> bool:
 def _call_ollama(prompt: str) -> str:
     import requests
     try:
+        # requests.post() sends an HTTP POST to the Ollama REST API.
+        # json= serialises the dict to JSON and sets Content-Type: application/json automatically.
         res = requests.post(
-            f"{OLLAMA_URL}/api/generate",
+            f"{OLLAMA_URL}/api/generate",  # native Ollama endpoint (NOT OpenAI-compatible)
             json={
                 "model": config.MODEL,        # read at call time — reflects runtime overrides
                 "prompt": prompt,
                 "stream": False,              # wait for the full response, not token-by-token
                 "options": {"num_ctx": OLLAMA_NUM_CTX},
             },
-            timeout=OLLAMA_TIMEOUT,
+            timeout=OLLAMA_TIMEOUT,           # seconds before giving up (large models are slow)
         )
-        res.raise_for_status()                # raises exception on HTTP 4xx / 5xx
+        # raise_for_status() does nothing on 2xx; raises requests.HTTPError on 4xx/5xx
+        res.raise_for_status()
+        # res.json() parses the JSON response body into a Python dict
         return res.json()["response"]
     except requests.exceptions.ConnectionError:
         die(f"Cannot reach Ollama at {OLLAMA_URL} — is 'docker compose up -d' running?")
@@ -85,13 +89,14 @@ def _call_anthropic(prompt: str) -> str:
             return _call_ollama(prompt)
         die("ANTHROPIC_API_KEY not set — add it to .env")
 
+    # anthropic.Anthropic() creates a stateless API client; the key is sent as a header on each request
     client = anthropic.Anthropic(api_key=key)
     msg = client.messages.create(
         model=config.MODEL,
-        max_tokens=4096,
+        max_tokens=4096,      # hard cap on response length in tokens (1 token ≈ 0.75 words)
         messages=[{"role": "user", "content": prompt}],
     )
-    # .content is a list of blocks — [0] is always the text reply
+    # .content is a list of content blocks (text, images, tool calls...) — [0] is always the text reply
     return msg.content[0].text
 
 
@@ -107,13 +112,15 @@ def _call_openai(prompt: str) -> str:
             return _call_ollama(prompt)
         die("OPENAI_API_KEY not set — add it to .env")
 
+    # base_url lets the OpenAI client talk to any OpenAI-compatible server, not just api.openai.com
+    # (e.g. GitHub Models, Azure OpenAI, vLLM, LM Studio)
     base_url = os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
     client = OpenAI(api_key=key, base_url=base_url)
     res = client.chat.completions.create(
         model=config.MODEL,
         messages=[{"role": "user", "content": prompt}],
     )
-    # .choices is a list of completions — [0] is the first (and only) one
+    # .choices is a list of candidate completions (usually 1); [0] is the first/only one
     return res.choices[0].message.content
 
 

@@ -44,9 +44,12 @@ def _read_audio(path: Path) -> str:
     whisper_dir = MODELS_PATH / "whisper"
     whisper_dir.mkdir(parents=True, exist_ok=True)  # create dir if it doesn't exist
 
-    # device/compute_type "auto" — Whisper picks CPU or GPU automatically
+    # device="auto" — Whisper picks GPU if available, falls back to CPU
+    # compute_type="auto" — uses float16 on GPU, int8 on CPU (best speed/quality trade-off per device)
+    # download_root — where to look for (and cache) the model weights
     model = WhisperModel(model_size, device="auto", compute_type="auto", download_root=str(whisper_dir))
-    segments, _ = model.transcribe(str(path))  # _ discards metadata we don't need
+    # transcribe() returns (segments_generator, transcription_info); we only need the segments
+    segments, _ = model.transcribe(str(path))
 
     # transcribe() returns timed chunks — join them into one string with spaces between
     return " ".join(seg.text.strip() for seg in segments)

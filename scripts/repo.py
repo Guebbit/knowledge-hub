@@ -90,6 +90,9 @@ def _run_graphify(repo_path: str, provider: str, model: str, update: bool) -> No
         "(node_modules, dist, build, .next, ...)."
     )
     print(f"Graphify : {'update' if update else 'extract'}  backend={backend}  model={model}")
+    # subprocess.run() launches a child process and waits for it to finish.
+    # cwd= sets the working directory for the child — graphify reads the target repo from "."
+    # returncode is the process exit status: 0 = success, anything else = failure
     result = subprocess.run(cmd, cwd=repo_path)
     if result.returncode != 0:
         die(f"graphify exited with code {result.returncode}")
@@ -117,10 +120,14 @@ def _inject_claude(repo_path: str) -> None:
     if claude_md.exists():
         content = claude_md.read_text()
         if _MARKER_START in content:
+            # re.escape() makes literal strings safe to use inside a regex
+            # .*? matches any content between the markers (non-greedy = shortest match)
+            # re.DOTALL makes . match newlines too — needed since the block spans multiple lines
             pattern = re.compile(
                 re.escape(_MARKER_START) + r".*?" + re.escape(_MARKER_END),
                 re.DOTALL,
             )
+            # pattern.sub(replacement, string) replaces every match of pattern with replacement
             claude_md.write_text(pattern.sub(_INJECTION, content))
             print(f"CLAUDE.md: updated 2repo block in {claude_md}")
             return
@@ -140,6 +147,9 @@ def _hook_excludes_block() -> str:
 
 
 def _git_capture(repo_path: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+    # capture_output=True captures stdout and stderr as strings instead of printing them
+    # text=True decodes the byte streams to str using the system locale (UTF-8 on modern Linux)
+    # Returns a CompletedProcess whose .stdout, .stderr, and .returncode we can inspect
     return subprocess.run(
         ["git", *args],
         cwd=repo_path,
@@ -149,6 +159,7 @@ def _git_capture(repo_path: str, args: list[str]) -> subprocess.CompletedProcess
 
 
 def _git_output(repo_path: str, args: list[str]) -> str | None:
+    """Run a git command and return its stdout, or None if it failed."""
     result = _git_capture(repo_path, args)
     if result.returncode != 0:
         return None
@@ -178,12 +189,13 @@ def _write_state(repo_path: str) -> None:
         return
 
     state = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),  # ISO 8601 timestamp in UTC
         "head": head,
         "threshold": _resolve_threshold(),
     }
     state_file = _repo_state_file(repo_path)
-    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.parent.mkdir(parents=True, exist_ok=True)  # create graphify-out/ if missing
+    # json.dumps() serialises the dict to a JSON string; indent=2 makes it human-readable
     state_file.write_text(json.dumps(state, indent=2) + "\n")
     print(f"Stale    : state updated in {state_file}")
 
@@ -194,6 +206,7 @@ def _read_state(repo_path: str) -> dict[str, str | int] | None:
         print("Stale    : state not found — run 2repo first")
         return None
     try:
+        # json.loads() parses a JSON string back into a Python dict/list
         return json.loads(state_file.read_text())
     except json.JSONDecodeError:
         die(f"invalid state file: {state_file}")

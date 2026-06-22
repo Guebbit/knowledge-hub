@@ -54,7 +54,10 @@ services:
     environment:
       VAULT_PATH: /vault
       MODELS_PATH: /models
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      # Graphify requires a non-empty value when OLLAMA_BASE_URL points to a
+      # non-localhost host (docker service name). Ollama ignores auth entirely.
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-local}
       DEFAULT_PRESET: ${DEFAULT_PRESET:-local}
       PRESET_LOCAL: ${PRESET_LOCAL:-ollama:qwen3:8b}
       PRESET_BIG: ${PRESET_BIG:-ollama:qwen3.6:27B}

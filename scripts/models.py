@@ -31,8 +31,10 @@ def cmd_pull(target: str) -> None:
         _die("faster-whisper not installed — run: pip install faster-whisper")
 
     whisper_dir = MODELS_PATH / "whisper"
-    whisper_dir.mkdir(parents=True, exist_ok=True)
+    whisper_dir.mkdir(parents=True, exist_ok=True)  # create the directory tree if it doesn't exist yet
     print(f"Pulling whisper/{size} into {whisper_dir} ...")
+    # WhisperModel() downloads the model weights if not already cached in download_root.
+    # device="cpu" forces CPU for the download step — GPU isn't needed just to fetch files.
     WhisperModel(size, device="cpu", download_root=str(whisper_dir))
     print(f"Done.")
 
@@ -44,8 +46,10 @@ def cmd_list() -> None:
         return
 
     found = False
-    for entry in sorted(whisper_dir.iterdir()):
+    for entry in sorted(whisper_dir.iterdir()):  # iterdir() lists direct children of the directory
         if entry.is_dir():
+            # rglob("*") walks the entire subtree and yields every file and directory inside.
+            # f.stat().st_size returns the file size in bytes from the filesystem metadata.
             size_mb = sum(f.stat().st_size for f in entry.rglob("*") if f.is_file()) / 1024 / 1024
             print(f"  whisper/{entry.name}  ({size_mb:.0f} MB)")
             found = True
@@ -62,6 +66,7 @@ def cmd_delete(target: str) -> None:
     if not model_dir.exists():
         _die(f"whisper/{size} not found in {MODELS_PATH / 'whisper'}")
 
+    # shutil.rmtree() removes the directory and all its contents recursively (like rm -rf)
     shutil.rmtree(model_dir)
     print(f"Deleted whisper/{size}.")
 

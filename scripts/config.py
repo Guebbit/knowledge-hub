@@ -36,8 +36,22 @@ MODEL: str
 PROVIDER, MODEL = PRESETS.get(DEFAULT_PRESET, ("ollama", "qwen3:8b"))
 
 # --- Ollama connection -------------------------------------------------------
-
-OLLAMA_URL     = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+#
+# OLLAMA_BASE_URL is shared by two consumers with incompatible URL expectations:
+#
+#   graphify (external library) — uses an OpenAI-compatible client internally,
+#     which constructs endpoints by appending to the base URL, so it needs /v1:
+#       http://ollama:11434/v1  →  .../v1/chat/completions  ✓
+#
+#   Our scripts (providers.py) — call Ollama's native REST API at /api/generate.
+#     The /v1 prefix must NOT be present here:
+#       http://ollama:11434      →  .../api/generate         ✓
+#       http://ollama:11434/v1   →  .../v1/api/generate      ✗ (404)
+#
+# Solution: .env stores OLLAMA_BASE_URL with /v1 so graphify works, and we strip
+# it here before our code uses it. rstrip("/") removes a trailing slash first so
+# removesuffix("/v1") matches regardless of trailing slashes.
+OLLAMA_URL     = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/").removesuffix("/v1")
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "32768"))  # env vars are strings — int() converts
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "600"))
 

@@ -30,6 +30,7 @@ def generate(repo_path: str, folder: str = "Projects") -> None:
     obsidian_out = repo / "graphify-out" / "obsidian"
     repo_wiki_out = repo / "wiki"
     vault_out = config.VAULT_PATH / folder / repo.name
+    # Security allowlist: _mirror_dir refuses to write outside these two roots
     allowed_roots = (repo.resolve(), config.VAULT_PATH.resolve())
 
     print(f"Wiki     : graphify export wiki (default -> {wiki_out})")
@@ -60,18 +61,22 @@ def _mirror_dir(src: Path, dst: Path, allowed_roots: tuple[Path, ...]) -> bool:
     if not src.exists():
         print(f"Wiki     : source not found, skipping copy: {src}")
         return False
+    # resolve() turns relative paths and symlinks into an absolute real path
+    # is_relative_to() checks that dst lives inside an allowed root — prevents writing to arbitrary paths
     resolved_dst = dst.resolve()
     if not any(resolved_dst.is_relative_to(root) for root in allowed_roots):
         print(f"Wiki     : refused to copy outside allowed roots: {dst}")
         return False
     if dst.exists():
         try:
+            # shutil.rmtree() removes a directory and all its contents recursively (like rm -rf)
             shutil.rmtree(dst)
         except OSError as exc:
             print(f"Wiki     : failed to remove existing directory {dst}: {exc}")
             return False
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
+        # shutil.copytree() copies an entire directory tree from src to dst
         shutil.copytree(src, dst)
     except OSError as exc:
         print(f"Wiki     : failed to copy directory {src} -> {dst}: {exc}")
@@ -82,6 +87,10 @@ def _mirror_dir(src: Path, dst: Path, allowed_roots: tuple[Path, ...]) -> bool:
 def _run_graphify_export(command: list[str], repo: Path, export_kind: str) -> bool:
     """Run a graphify export command and print failures consistently."""
     try:
+        # check=True makes subprocess raise CalledProcessError if the exit code is non-zero,
+        # instead of silently returning a result with returncode != 0
+        # capture_output=True captures stdout/stderr as strings so we can print them on failure
+        # text=True decodes byte output to str automatically
         subprocess.run(
             command,
             cwd=repo,
@@ -90,6 +99,8 @@ def _run_graphify_export(command: list[str], repo: Path, export_kind: str) -> bo
             check=True,
         )
     except subprocess.CalledProcessError as exc:
+        # exc.returncode — the non-zero exit code from graphify
+        # exc.stdout / exc.stderr — the captured output we can surface to the user
         print(f"Wiki     : graphify export {export_kind} failed with code {exc.returncode}")
         if exc.stdout:
             print(exc.stdout.strip())
