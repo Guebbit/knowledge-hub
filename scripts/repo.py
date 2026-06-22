@@ -46,7 +46,7 @@ _BACKEND_MAP = {
 _MARKER_START = "<!-- 2repo:start — regenerate with: 2repo . -->"
 _MARKER_END   = "<!-- 2repo:end -->"
 _INJECTION    = f"{_MARKER_START}\n@graphify-out/GRAPH_REPORT.md\n{_MARKER_END}"
-_STATE_FILE = Path("graphify-out/.2repo-state.json")
+_STATE_FILE_RELATIVE_PATH = Path("graphify-out/.2repo-state.json")
 _STALE_EXCLUDES = [
     ":(exclude)graphify-out/**",
     ":(exclude).claude/**",
@@ -130,7 +130,7 @@ def _inject_claude(repo_path: str) -> None:
 
 
 def _repo_state_file(repo_path: str) -> Path:
-    return Path(repo_path) / _STATE_FILE
+    return Path(repo_path) / _STATE_FILE_RELATIVE_PATH
 
 
 def _git_capture(repo_path: str, args: list[str]) -> subprocess.CompletedProcess[str]:

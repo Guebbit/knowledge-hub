@@ -97,7 +97,8 @@ YOUR BRAIN (ADHD)
 │
 │  opens a repo      →  2repo ~/Work/my-repo
 │                              │
-│                              ├── graphify-out/GRAPH_REPORT.md  ← AI assistant starts here
+│                              ├── graphify-out/
+│                              │    └── GRAPH_REPORT.md  ← AI assistant starts here
 │                              │
 │                              └── vault/Projects/my-repo/
 │                                          │
