@@ -208,14 +208,22 @@ def _changed_files_since(repo_path: str, base_commit: str) -> set[str]:
     if diff_out:
         changed.update(p for p in diff_out.splitlines() if p and not _is_generated_path(p))
 
-    status_out = _git_output(repo_path, ["status", "--porcelain", "--untracked-files=normal"])
-    if status_out:
-        for line in status_out.splitlines():
-            if len(line) < 4:
+    status = _git_capture(repo_path, ["status", "--porcelain", "-z", "--untracked-files=normal"])
+    if status.returncode == 0 and status.stdout:
+        entries = status.stdout.split("\0")
+        i = 0
+        while i < len(entries):
+            entry = entries[i]
+            if not entry:
+                i += 1
                 continue
-            path = line[3:]
-            if " -> " in path:
-                path = path.split(" -> ", 1)[1]
+            code = entry[:2]
+            path = entry[3:] if len(entry) > 3 else ""
+            i += 1
+            # In -z mode, rename/copy stores old path in this entry and new path in the next one.
+            if ("R" in code or "C" in code) and i < len(entries):
+                path = entries[i]
+                i += 1
             if path and not _is_generated_path(path):
                 changed.add(path)
     return changed
