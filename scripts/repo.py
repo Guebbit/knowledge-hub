@@ -156,7 +156,7 @@ def _in_git_repo(repo_path: str) -> bool:
 
 def _resolve_threshold() -> int:
     try:
-        return max(1, int(os.getenv("REPO_STALE_THRESHOLD", "5")))
+        return max(0, int(os.getenv("REPO_STALE_THRESHOLD", "5")))
     except ValueError:
         return 5
 
@@ -221,7 +221,7 @@ def _changed_files_since(repo_path: str, base_commit: str) -> set[str]:
             path = entry[3:] if len(entry) > 3 else ""
             i += 1
             # In -z mode, rename/copy stores old path in this entry and new path in the next one.
-            if ("R" in code or "C" in code) and i < len(entries):
+            if (code[0] in {"R", "C"} or code[1] in {"R", "C"}) and i < len(entries):
                 path = entries[i]
                 i += 1
             if path and not _is_generated_path(path):
@@ -246,7 +246,7 @@ def _check(repo_path: str) -> int:
     threshold = _resolve_threshold()
     changed = _changed_files_since(repo_path, base_commit)
     changed_count = len(changed)
-    stale = changed_count >= threshold
+    stale = threshold > 0 and changed_count >= threshold
     status = "STALE" if stale else "fresh"
     print(f"Stale    : {status} ({changed_count} changed files, threshold={threshold})")
     if changed_count > 0:
@@ -285,7 +285,7 @@ changed="$(git diff --name-only "${{base_commit}}"..HEAD -- . \\
   ':(exclude)wiki/**' | sed '/^$/d' | wc -l)"
 threshold="{threshold}"
 
-if [[ "${{changed}}" -ge "${{threshold}}" ]]; then
+if [[ "${{threshold}}" -gt 0 && "${{changed}}" -ge "${{threshold}}" ]]; then
   echo "2repo warning: graph may be stale (${{changed}} files changed since last generation, threshold=${{threshold}})." >&2
   echo "Run: 2repo . --update   (or full run: 2repo .)" >&2
 fi

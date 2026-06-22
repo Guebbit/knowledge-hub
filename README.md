@@ -640,7 +640,7 @@ Staleness is computed from changed files since that baseline commit, including c
 |---|---|---|
 | `REPO_PRESET_GRAPH` | `smart` | Preset used for graphify extraction (`2repo`) |
 | `REPO_PRESET_WIKI` | `local` | Preset used for wiki generation |
-| `REPO_STALE_THRESHOLD` | `5` | Files-changed threshold for the stale hook warning |
+| `REPO_STALE_THRESHOLD` | `5` | Files-changed threshold for stale warnings (`0` disables warning mode) |
 
 ---
 
