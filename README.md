@@ -41,17 +41,17 @@ This system externalizes both problems.
 
 ---
 
-### Piece 2 — graphify (`2repo --graph` → `knowledge-graph.md`)
+### Piece 2 — graphify (`2repo` → `graphify-out/GRAPH_REPORT.md`)
 
 **What it is:** a single AI-generated file that summarizes an entire codebase and lives inside that repo.
 
-**How it works:** `2repo ~/Work/my-repo` reads the repo, calls the AI, writes `knowledge-graph.md` at the repo root. Claude Code automatically loads it at session start.
+**How it works:** `2repo ~/Work/my-repo` reads the repo, calls graphify, writes `graphify-out/GRAPH_REPORT.md`, and injects it into `CLAUDE.md` so Claude Code auto-loads it at session start.
 
 **Why it matters:**
 
 When you open a project in Claude Code (or any AI assistant), the AI starts cold — it knows nothing about your codebase. It has to read dozens of files to understand the structure, burning through its context window before you've asked a single question.
 
-With `knowledge-graph.md`, the AI starts every session already knowing:
+With `graphify-out/GRAPH_REPORT.md`, the AI starts every session already knowing:
 - What the repo does (purpose)
 - Which files do what (key files table)
 - How modules depend on each other (Mermaid diagram)
@@ -59,7 +59,7 @@ With `knowledge-graph.md`, the AI starts every session already knowing:
 
 One file. Zero wasted context. The AI is useful from the first message.
 
-**For humans too:** open `knowledge-graph.md` and understand any repo in 30 seconds — no need to read 50 files.
+**For humans too:** open `graphify-out/GRAPH_REPORT.md` and understand any repo in 30 seconds — no need to read 50 files.
 
 ---
 
@@ -97,7 +97,8 @@ YOUR BRAIN (ADHD)
 │
 │  opens a repo      →  2repo ~/Work/my-repo
 │                              │
-│                              ├── knowledge-graph.md  ← AI assistant starts here
+│                              ├── graphify-out/
+│                              │    └── GRAPH_REPORT.md  ← AI assistant starts here
 │                              │
 │                              └── vault/Projects/my-repo/
 │                                          │
@@ -570,31 +571,23 @@ If the combined content is dense enough to split into focused subtopics, add `--
 ## 2repo — understand and document any codebase
 
 `2repo` is a sibling command to `2brain` focused on codebases.
-One command: reads a repo, calls the AI, writes two outputs:
-
-- **`knowledge-graph.md`** in the target repo — lets Claude Code load the full codebase context at session start without reading dozens of files
-- **`vault/Projects/<repo-name>/`** in Obsidian — human-readable wiki with architecture, setup, and diagrams
+One command reads a repo, calls graphify, and writes repo-local graph artifacts. Optionally, it can also export a wiki to Obsidian.
 
 ```
-2repo ~/Work/my-repo  →  knowledge-graph.md + Obsidian wiki
+2repo ~/Work/my-repo  →  graphify-out/GRAPH_REPORT.md (+ wiki with --wiki)
 ```
 
 ### Basic usage
 
 ```bash
-# Full run: graph + wiki (default — deep scan, falls back to medium)
+# Full run: graph extraction (default behavior)
 2repo ~/Work/my-repo
 
-# Graph only (token-saver for Claude Code)
-2repo ~/Work/my-repo --graph
-
-# Wiki only (Obsidian reference)
+# Also generate wiki exports + mirror to vault
 2repo ~/Work/my-repo --wiki
 
-# Control scan depth
-2repo ~/Work/my-repo --shallow    # file tree + README + manifests (~3k tokens)
-2repo ~/Work/my-repo --medium     # + configs + entry points + Docker (~15k tokens)
-2repo ~/Work/my-repo --deep       # + all source files (~80k+ tokens)
+# Incremental update (re-extract changed files, no LLM semantic pass)
+2repo ~/Work/my-repo --update
 
 # Override AI preset for this run
 2repo ~/Work/my-repo --preset smart
@@ -605,7 +598,7 @@ One command: reads a repo, calls the AI, writes two outputs:
 # Staleness check — no AI call, instant
 2repo ~/Work/my-repo --check
 
-# Install a post-commit hook that warns when the graph may be stale
+# Install a post-commit hook that warns when graph may be stale
 2repo ~/Work/my-repo --install-hook
 ```
 
@@ -615,43 +608,40 @@ One command: reads a repo, calls the AI, writes two outputs:
 
 ```
 my-repo/
-├── knowledge-graph.md        ← the graph (commit this — it's documentation)
-├── CLAUDE.md                 ← @knowledge-graph.md injected with markers
+├── graphify-out/
+│   ├── GRAPH_REPORT.md       ← graph summary for AI + humans
+│   ├── graph.json            ← full graph data
+│   └── .2repo-state.json     ← stale-check baseline metadata
+├── CLAUDE.md                 ← @graphify-out/GRAPH_REPORT.md block injected
 └── .claude/
-    ├── KNOWLEDGE.md          ← @../knowledge-graph.md (Claude Code auto-load)
-    └── wiki.md               ← pointer back to vault wiki
+    └── KNOWLEDGE.md          ← @../graphify-out/GRAPH_REPORT.md (auto-load)
 ```
 
-**In Obsidian vault (`vault/Projects/my-repo/`):**
+When `--wiki` is enabled:
 
-| Depth   | Notes created |
-|---------|--------------|
-| shallow | `index.md` only |
-| medium  | `index.md` + `graph.md` + `architecture.md` + `setup.md` |
-| deep    | all above + one note per key module (`components/`) |
+- `<repo>/wiki/` gets a plain markdown clone of graphify's wiki export
+- `vault/Projects/<repo-name>/` (or custom `-f` folder) gets the Obsidian clone
 
 ### Staleness detection
 
-The graph file stores a fingerprint when generated:
+After each successful 2repo run, this state file is updated:
 
 ```
-<!-- 2repo:generated | date: 2026-06-21 | repo: my-repo | files: 47 | hash: a3f8c2 -->
+graphify-out/.2repo-state.json
 ```
 
-Three layers to detect when it's out of date:
+Staleness is computed from changed files since that baseline commit using `git diff` (committed changes) plus `git status` (staged, unstaged, untracked changes), while excluding generated outputs such as `graphify-out/`, `.claude/`, `CLAUDE.md`, and `wiki/`.
 
-1. **Embedded hash** — always present, zero cost to check
-2. **`--check`** — recomputes hash instantly, no AI call
-3. **`--install-hook`** — post-commit hook prints a warning when `REPO_STALE_THRESHOLD` files have changed (default: 5)
+1. **`--check`** — prints fresh/stale status and changed-file count, no AI call
+2. **`--install-hook`** — installs a post-commit warning based on committed changes when they reach `REPO_STALE_THRESHOLD` (default: 5)
 
 ### 2repo configuration (`.env`)
 
 | Variable | Default | What it does |
 |---|---|---|
-| `REPO_PRESET_SHALLOW` | `local` | Preset used for shallow scans |
-| `REPO_PRESET_MEDIUM` | `local` | Preset used for medium scans |
-| `REPO_PRESET_DEEP` | `smart` | Preset used for deep scans (needs large context) |
-| `REPO_STALE_THRESHOLD` | `5` | Files-changed threshold for the stale hook warning |
+| `REPO_PRESET_GRAPH` | `smart` | Preset used for graphify extraction (`2repo`) |
+| `REPO_PRESET_WIKI` | `local` | Preset used for wiki generation |
+| `REPO_STALE_THRESHOLD` | `5` | Files-changed threshold for stale warnings (`0` disables warning mode) |
 
 ---
 
