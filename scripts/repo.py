@@ -227,7 +227,7 @@ def _changed_files_since(repo_path: str, base_commit: str) -> set[str]:
                 i += 1
                 continue
             code = entry[:2]
-            path = entry[_PORCELAIN_STATUS_AND_SPACE_LENGTH:] if len(entry) > _PORCELAIN_STATUS_AND_SPACE_LENGTH else ""
+            path = entry[_PORCELAIN_STATUS_AND_SPACE_LENGTH:] if len(entry) >= _PORCELAIN_STATUS_AND_SPACE_LENGTH else ""
             i += 1
             # In -z mode, rename/copy stores old path in this entry and new path in the next one.
             if (code[0] in {"R", "C"} or code[1] in {"R", "C"}) and i < len(entries):
