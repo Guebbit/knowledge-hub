@@ -208,7 +208,10 @@ def _changed_files_since(repo_path: str, base_commit: str) -> set[str]:
     if diff_out:
         changed.update(p for p in diff_out.splitlines() if p and not _is_generated_path(p))
 
-    status = _git_capture(repo_path, ["status", "--porcelain", "-z", "--untracked-files=normal"])
+    status = _git_capture(
+        repo_path,
+        ["status", "--porcelain", "-z", "--untracked-files=normal", "--", ".", *_STALE_EXCLUDES],
+    )
     if status.returncode == 0 and status.stdout:
         entries = status.stdout.split("\0")
         i = 0
