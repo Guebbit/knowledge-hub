@@ -7,7 +7,8 @@ Usage (via 2repo.sh alias):
   2repo /path/to/repo          # graph for a specific repo
   2repo . --update             # incremental update (re-extract changed files, no LLM)
   2repo . --wiki               # also generate wiki pages in the vault (see repo_wiki.py)
-  2repo . --hook               # install graphify git post-commit hook
+  2repo . --check              # check if graph may be stale
+  2repo . --install-hook       # install a stale-warning post-commit hook
   2repo . --preset smart       # override AI preset
 
 Outputs written to the target repo:
@@ -23,10 +24,12 @@ Wiki output (--wiki):
   vault/Projects/<repo-name>/    — Obsidian clone (from graphify-out/obsidian)
 """
 import argparse
+import json
 import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import config
@@ -43,6 +46,13 @@ _BACKEND_MAP = {
 _MARKER_START = "<!-- 2repo:start — regenerate with: 2repo . -->"
 _MARKER_END   = "<!-- 2repo:end -->"
 _INJECTION    = f"{_MARKER_START}\n@graphify-out/GRAPH_REPORT.md\n{_MARKER_END}"
+_STATE_FILE = Path("graphify-out/.2repo-state.json")
+_STALE_EXCLUDES = [
+    ":(exclude)graphify-out/**",
+    ":(exclude).claude/**",
+    ":(exclude)CLAUDE.md",
+    ":(exclude)wiki/**",
+]
 
 
 def _resolve_preset(name: str | None) -> tuple[str, str]:
@@ -119,6 +129,166 @@ def _inject_claude(repo_path: str) -> None:
     print(f"CLAUDE.md: {claude_md}")
 
 
+def _repo_state_file(repo_path: str) -> Path:
+    return Path(repo_path) / _STATE_FILE
+
+
+def _git_capture(repo_path: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _git_output(repo_path: str, args: list[str]) -> str | None:
+    result = _git_capture(repo_path, args)
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _in_git_repo(repo_path: str) -> bool:
+    out = _git_output(repo_path, ["rev-parse", "--is-inside-work-tree"])
+    return out == "true"
+
+
+def _resolve_threshold() -> int:
+    try:
+        return max(1, int(os.getenv("REPO_STALE_THRESHOLD", "5")))
+    except ValueError:
+        return 5
+
+
+def _write_state(repo_path: str) -> None:
+    if not _in_git_repo(repo_path):
+        print("Stale    : skipped state write (not a git repository)")
+        return
+
+    head = _git_output(repo_path, ["rev-parse", "HEAD"])
+    if not head:
+        print("Stale    : skipped state write (cannot resolve HEAD)")
+        return
+
+    state = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "head": head,
+        "threshold": _resolve_threshold(),
+    }
+    state_file = _repo_state_file(repo_path)
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(json.dumps(state, indent=2) + "\n")
+    print(f"Stale    : state updated in {state_file}")
+
+
+def _read_state(repo_path: str) -> dict[str, str | int] | None:
+    state_file = _repo_state_file(repo_path)
+    if not state_file.exists():
+        print("Stale    : state not found — run 2repo first")
+        return None
+    try:
+        return json.loads(state_file.read_text())
+    except json.JSONDecodeError:
+        die(f"invalid state file: {state_file}")
+
+
+def _is_generated_path(path: str) -> bool:
+    return (
+        path.startswith("graphify-out/")
+        or path.startswith(".claude/")
+        or path.startswith("wiki/")
+        or path == "CLAUDE.md"
+    )
+
+
+def _changed_files_since(repo_path: str, base_commit: str) -> set[str]:
+    changed: set[str] = set()
+    diff_out = _git_output(repo_path, ["diff", "--name-only", f"{base_commit}..HEAD", "--", ".", *_STALE_EXCLUDES])
+    if diff_out:
+        changed.update(p for p in diff_out.splitlines() if p and not _is_generated_path(p))
+
+    status_out = _git_output(repo_path, ["status", "--porcelain", "--untracked-files=normal"])
+    if status_out:
+        for line in status_out.splitlines():
+            if len(line) < 4:
+                continue
+            path = line[3:]
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path and not _is_generated_path(path):
+                changed.add(path)
+    return changed
+
+
+def _check(repo_path: str) -> int:
+    if not _in_git_repo(repo_path):
+        die("--check requires a git repository")
+
+    state = _read_state(repo_path)
+    if not state:
+        return 1
+
+    base_commit = str(state.get("head", "")).strip()
+    if not base_commit:
+        die("state file missing 'head' commit")
+    if _git_capture(repo_path, ["cat-file", "-e", f"{base_commit}^{{commit}}"]).returncode != 0:
+        die(f"baseline commit not found: {base_commit}")
+
+    threshold = _resolve_threshold()
+    changed = _changed_files_since(repo_path, base_commit)
+    changed_count = len(changed)
+    stale = changed_count >= threshold
+    status = "STALE" if stale else "fresh"
+    print(f"Stale    : {status} ({changed_count} changed files, threshold={threshold})")
+    if changed_count > 0:
+        preview = ", ".join(sorted(changed)[:10])
+        if changed_count > 10:
+            preview += ", ..."
+        print(f"Changed  : {preview}")
+    return 2 if stale else 0
+
+
+def _install_hook(repo_path: str) -> int:
+    if not _in_git_repo(repo_path):
+        die("--install-hook requires a git repository")
+
+    hooks_dir = Path(repo_path) / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook_path = hooks_dir / "post-commit"
+    threshold = _resolve_threshold()
+    hook = f"""#!/usr/bin/env bash
+set -euo pipefail
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -z "${{repo_root}}" ]] && exit 0
+state_file="${{repo_root}}/graphify-out/.2repo-state.json"
+[[ ! -f "${{state_file}}" ]] && exit 0
+
+base_commit="$(grep -Eo '"head"\\s*:\\s*"[^"]+"' "${{state_file}}" | head -n1 | sed -E 's/.*"([^"]+)"/\\1/')"
+[[ -z "${{base_commit}}" ]] && exit 0
+if ! git cat-file -e "${{base_commit}}^{{commit}}" 2>/dev/null; then
+  exit 0
+fi
+
+changed="$(git diff --name-only "${{base_commit}}"..HEAD -- . \\
+  ':(exclude)graphify-out/**' \\
+  ':(exclude).claude/**' \\
+  ':(exclude)CLAUDE.md' \\
+  ':(exclude)wiki/**' | sed '/^$/d' | wc -l)"
+threshold="{threshold}"
+
+if [[ "${{changed}}" -ge "${{threshold}}" ]]; then
+  echo "2repo warning: graph may be stale (${{changed}} files changed since last generation, threshold=${{threshold}})." >&2
+  echo "Run: 2repo . --update   (or full run: 2repo .)" >&2
+fi
+"""
+    hook_path.write_text(hook)
+    hook_path.chmod(0o755)
+    print(f"Hook     : installed stale-warning hook in {hook_path}")
+    print(f"Hook     : threshold={threshold} (set REPO_STALE_THRESHOLD to change)")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate a knowledge graph for any codebase using graphify"
@@ -129,8 +299,11 @@ def main() -> None:
                         help="Generate LLM wiki pages in the vault (see repo_wiki.py)")
     parser.add_argument("--update", action="store_true",
                         help="Incremental update — re-extract only changed files")
-    parser.add_argument("--hook", action="store_true",
-                        help="Install graphify git post-commit hook in the target repo")
+    parser.add_argument("--check", action="store_true",
+                        help="Check if graph is stale based on changed files since last generation")
+    parser.add_argument("--install-hook", action="store_true",
+                        help="Install a post-commit hook that warns when graph may be stale")
+    parser.add_argument("--hook", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--preset", metavar="NAME",
                         help="Override REPO_PRESET_GRAPH (e.g. smart, local, big)")
     parser.add_argument("-f", "--folder", default="Projects",
@@ -141,8 +314,12 @@ def main() -> None:
         die(f"not a directory: {args.repo}")
 
     if args.hook:
-        result = subprocess.run(["graphify", "hook", "install"], cwd=args.repo)
-        sys.exit(result.returncode)
+        print("Warning  : --hook is deprecated; use --install-hook")
+        args.install_hook = True
+    if args.check:
+        sys.exit(_check(args.repo))
+    if args.install_hook:
+        sys.exit(_install_hook(args.repo))
 
     provider, model = _resolve_preset(args.preset)
     print(f"Provider : {provider}  |  Model: {model}")
@@ -153,6 +330,8 @@ def main() -> None:
     if args.wiki:
         from repo_wiki import generate as wiki_generate
         wiki_generate(args.repo, folder=args.folder)
+
+    _write_state(args.repo)
 
 
 if __name__ == "__main__":

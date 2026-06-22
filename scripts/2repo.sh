@@ -7,7 +7,8 @@
 #   2repo . --update                     # incremental update (changed files only)
 #   2repo . --wiki                       # also generate LLM wiki in vault/Projects/
 #   2repo . --wiki -f Reference          # wiki in vault/Reference/
-#   2repo . --hook                       # install graphify git post-commit hook
+#   2repo . --check                      # check if graph may be stale
+#   2repo . --install-hook               # install stale-warning post-commit hook
 #   2repo . --preset smart               # override AI preset
 #
 # Register globally:
@@ -37,7 +38,7 @@ done
 
 if [[ -z "$REPO_PATH" ]]; then
     echo "ERROR: provide a path to the target repository (or '.' for current directory)" >&2
-    echo "Usage: 2repo . [--update] [--wiki] [--hook] [--preset NAME]" >&2
+    echo "Usage: 2repo . [--update] [--wiki] [--check] [--install-hook] [--preset NAME]" >&2
     exit 1
 fi
 
