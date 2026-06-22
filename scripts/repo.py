@@ -53,7 +53,7 @@ _STALE_EXCLUDES = [
     ":(exclude)CLAUDE.md",
     ":(exclude)wiki/**",
 ]
-_PORCELAIN_STATUS_AND_SPACE_LENGTH = 3
+_PORCELAIN_STATUS_PREFIX_LENGTH = 3
 
 
 def _resolve_preset(name: str | None) -> tuple[str, str]:
@@ -227,10 +227,10 @@ def _changed_files_since(repo_path: str, base_commit: str) -> set[str]:
                 i += 1
                 continue
             code = entry[:2]
-            path = entry[_PORCELAIN_STATUS_AND_SPACE_LENGTH:] if len(entry) >= _PORCELAIN_STATUS_AND_SPACE_LENGTH else ""
+            path = entry[_PORCELAIN_STATUS_PREFIX_LENGTH:] if len(entry) >= _PORCELAIN_STATUS_PREFIX_LENGTH else ""
             i += 1
             # In -z mode, rename/copy stores old path in this entry and new path in the next one.
-            if (code[0] in {"R", "C"} or code[1] in {"R", "C"}) and i < len(entries):
+            if code[0] in {"R", "C"} and i < len(entries):
                 path = entries[i]
                 i += 1
             if path and not _is_generated_path(path):

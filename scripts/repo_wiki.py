@@ -61,7 +61,7 @@ def _mirror_dir(src: Path, dst: Path, allowed_roots: tuple[Path, ...]) -> bool:
         print(f"Wiki     : source not found, skipping copy: {src}")
         return False
     resolved_dst = dst.resolve()
-    if not any(resolved_dst == root or root in resolved_dst.parents for root in allowed_roots):
+    if not any(resolved_dst.is_relative_to(root) for root in allowed_roots):
         print(f"Wiki     : refused to copy outside allowed roots: {dst}")
         return False
     if dst.exists():
