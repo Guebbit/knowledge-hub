@@ -14,6 +14,7 @@ Usage (via 2repo.sh alias):
 Outputs written to the target repo:
   graphify-out/GRAPH_REPORT.md  — knowledge graph (tool-agnostic)
   graphify-out/graph.json        — full graph data for downstream use
+  graphify-out/EXECUTION.md      — build/test/CI/migration execution knowledge
   .claude/KNOWLEDGE.md           — @../graphify-out/GRAPH_REPORT.md
   CLAUDE.md                      — injected @graphify-out/GRAPH_REPORT.md block
 
@@ -45,7 +46,12 @@ _BACKEND_MAP = {
 
 _MARKER_START = "<!-- 2repo:start — regenerate with: 2repo . -->"
 _MARKER_END   = "<!-- 2repo:end -->"
-_INJECTION    = f"{_MARKER_START}\n@graphify-out/GRAPH_REPORT.md\n{_MARKER_END}"
+_INJECTION    = (
+    f"{_MARKER_START}\n"
+    "@graphify-out/GRAPH_REPORT.md\n"
+    "@graphify-out/EXECUTION.md\n"
+    f"{_MARKER_END}"
+)
 _STATE_FILE_SUBPATH = Path("graphify-out/.2repo-state.json")
 _STALE_EXCLUDES = [
     ":(exclude)graphify-out/**",
@@ -112,7 +118,10 @@ def _inject_claude(repo_path: str) -> None:
     # .claude/KNOWLEDGE.md — Claude Code auto-loads files in .claude/
     claude_dir = repo / ".claude"
     claude_dir.mkdir(exist_ok=True)
-    (claude_dir / "KNOWLEDGE.md").write_text("@../graphify-out/GRAPH_REPORT.md\n")
+    (claude_dir / "KNOWLEDGE.md").write_text(
+        "@../graphify-out/GRAPH_REPORT.md\n"
+        "@../graphify-out/EXECUTION.md\n"
+    )
     print(f"Pointer  : {claude_dir / 'KNOWLEDGE.md'}")
 
     # CLAUDE.md — inject or update the @-reference block
@@ -349,6 +358,8 @@ def main() -> None:
     print(f"Provider : {provider}  |  Model: {model}")
 
     _run_graphify(args.repo, provider, model, update=args.update)
+    from repo_execution import generate as execution_generate
+    execution_generate(args.repo)
     _inject_claude(args.repo)
 
     if args.wiki:
