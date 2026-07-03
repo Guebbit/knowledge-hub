@@ -73,7 +73,7 @@ def _read_package_scripts(path: Path) -> dict[str, str]:
     scripts = data.get("scripts")
     if not isinstance(scripts, dict):
         return {}
-    return {k: v for k, v in scripts.items() if isinstance(k, str) and isinstance(v, str)}
+    return _string_dict(scripts)
 
 
 def _read_make_targets(path: Path) -> list[str]:
@@ -81,17 +81,18 @@ def _read_make_targets(path: Path) -> list[str]:
         return []
     targets: list[str] = []
     seen: set[str] = set()
-    for line in path.read_text(errors="replace").splitlines():
-        if not line or line.startswith("\t") or line.lstrip().startswith("#"):
-            continue
-        match = re.match(r"^([A-Za-z0-9_.-]+)\s*:(?![=])", line)
-        if not match:
-            continue
-        target = match.group(1)
-        if target.startswith(".") or "%" in target or target in seen:
-            continue
-        seen.add(target)
-        targets.append(target)
+    with path.open(errors="replace") as handle:
+        for line in handle:
+            if not line or line.startswith("\t") or line.lstrip().startswith("#"):
+                continue
+            match = re.match(r"^([A-Za-z0-9_.-]+)\s*:(?![=])", line)
+            if not match:
+                continue
+            target = match.group(1)
+            if target.startswith(".") or "%" in target or target in seen:
+                continue
+            seen.add(target)
+            targets.append(target)
     return targets
 
 
@@ -106,7 +107,7 @@ def _read_pyproject_scripts(path: Path) -> dict[str, str]:
     scripts: dict[str, str] = {}
     project_scripts = data.get("project", {}).get("scripts", {})
     if isinstance(project_scripts, dict):
-        scripts.update({k: v for k, v in project_scripts.items() if isinstance(k, str) and isinstance(v, str)})
+        scripts.update(_string_dict(project_scripts))
 
     poetry_scripts = data.get("tool", {}).get("poetry", {}).get("scripts", {})
     if isinstance(poetry_scripts, dict):
@@ -144,25 +145,29 @@ def _normalize_poe_task(value: object) -> str | None:
     return None
 
 
+def _string_dict(raw: dict[object, object]) -> dict[str, str]:
+    return {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
+
+
 def _read_workflows(dir_path: Path) -> list[dict[str, object]]:
     if not dir_path.exists():
         return []
 
     workflows: list[dict[str, object]] = []
     for wf in sorted(list(dir_path.glob("*.yml")) + list(dir_path.glob("*.yaml"))):
-        lines = wf.read_text(errors="replace").splitlines()
         name = None
         run_commands: list[str] = []
-        for line in lines:
-            if name is None:
-                name_match = re.match(r"^\s*name:\s*(.+)\s*$", line)
-                if name_match:
-                    name = name_match.group(1).strip().strip("\"'")
-            run_match = re.match(r"^\s*run:\s*(.+)\s*$", line)
-            if run_match:
-                cmd = run_match.group(1).strip()
-                if cmd and cmd not in run_commands:
-                    run_commands.append(cmd)
+        with wf.open(errors="replace") as handle:
+            for line in handle:
+                if name is None:
+                    name_match = re.match(r"^\s*name:\s*(.+)\s*$", line)
+                    if name_match:
+                        name = name_match.group(1).strip().strip("\"'")
+                run_match = re.match(r"^\s*run:\s*(.+)\s*$", line)
+                if run_match:
+                    cmd = run_match.group(1).strip()
+                    if cmd and cmd not in run_commands:
+                        run_commands.append(cmd)
 
         workflows.append(
             {
