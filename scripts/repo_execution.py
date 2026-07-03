@@ -18,6 +18,9 @@ from pathlib import Path
 
 
 _SCRIPT_KEYWORDS = ("test", "build", "lint", "start", "dev", "check", "format")
+_MAX_WORKFLOW_RUN_COMMANDS = 12
+_MAX_MIGRATION_PATHS = 20
+_MAX_QUICK_COMMANDS = 20
 _MIGRATION_PATH_GLOBS = (
     "**/alembic/versions",
     "**/prisma/migrations",
@@ -70,7 +73,7 @@ def _read_package_scripts(path: Path) -> dict[str, str]:
     scripts = data.get("scripts")
     if not isinstance(scripts, dict):
         return {}
-    return {k: str(v) for k, v in scripts.items() if isinstance(k, str)}
+    return {k: v for k, v in scripts.items() if isinstance(k, str) and isinstance(v, str)}
 
 
 def _read_make_targets(path: Path) -> list[str]:
@@ -103,20 +106,42 @@ def _read_pyproject_scripts(path: Path) -> dict[str, str]:
     scripts: dict[str, str] = {}
     project_scripts = data.get("project", {}).get("scripts", {})
     if isinstance(project_scripts, dict):
-        scripts.update({k: str(v) for k, v in project_scripts.items() if isinstance(k, str)})
+        scripts.update({k: v for k, v in project_scripts.items() if isinstance(k, str) and isinstance(v, str)})
 
     poetry_scripts = data.get("tool", {}).get("poetry", {}).get("scripts", {})
     if isinstance(poetry_scripts, dict):
         for k, v in poetry_scripts.items():
             if isinstance(k, str):
-                scripts[k] = str(v)
+                if isinstance(v, str):
+                    scripts[k] = v
+                elif isinstance(v, dict) and isinstance(v.get("callable"), str):
+                    scripts[k] = f"callable:{v['callable']}"
 
     poe_tasks = data.get("tool", {}).get("poe", {}).get("tasks", {})
     if isinstance(poe_tasks, dict):
         for k, v in poe_tasks.items():
             if isinstance(k, str):
-                scripts[f"poe:{k}"] = str(v)
+                normalized = _normalize_poe_task(v)
+                if normalized:
+                    scripts[f"poe:{k}"] = normalized
     return scripts
+
+
+def _normalize_poe_task(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = [str(item) for item in value if isinstance(item, str)]
+        return " && ".join(parts) if parts else None
+    if isinstance(value, dict):
+        cmd = value.get("cmd")
+        if isinstance(cmd, str):
+            return cmd
+        sequence = value.get("sequence")
+        if isinstance(sequence, list):
+            parts = [str(item) for item in sequence if isinstance(item, str)]
+            return " && ".join(parts) if parts else None
+    return None
 
 
 def _read_workflows(dir_path: Path) -> list[dict[str, object]]:
@@ -143,7 +168,7 @@ def _read_workflows(dir_path: Path) -> list[dict[str, object]]:
             {
                 "file": str(wf.relative_to(dir_path.parent.parent)),
                 "name": name,
-                "run_commands": run_commands[:12],
+                "run_commands": run_commands[:_MAX_WORKFLOW_RUN_COMMANDS],
             }
         )
     return workflows
@@ -160,9 +185,9 @@ def _read_migrations(repo: Path) -> tuple[list[str], list[str]]:
             if rel not in seen_paths:
                 seen_paths.add(rel)
                 migration_paths.append(rel)
-            if len(migration_paths) >= 20:
+            if len(migration_paths) >= _MAX_MIGRATION_PATHS:
                 break
-        if len(migration_paths) >= 20:
+        if len(migration_paths) >= _MAX_MIGRATION_PATHS:
             break
 
     hints: list[str] = []
@@ -203,7 +228,7 @@ def _quick_commands(
         if any(k in name.lower() for k in _SCRIPT_KEYWORDS) and cmd not in seen:
             seen.add(cmd)
             commands.append(cmd)
-    return commands[:20]
+    return commands[:_MAX_QUICK_COMMANDS]
 
 
 def _render_markdown(
