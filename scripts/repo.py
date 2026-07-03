@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import config
+from repo_execution import generate as execution_generate
 from utils import die
 
 
@@ -358,7 +359,6 @@ def main() -> None:
     print(f"Provider : {provider}  |  Model: {model}")
 
     _run_graphify(args.repo, provider, model, update=args.update)
-    from repo_execution import generate as execution_generate
     execution_generate(args.repo)
     _inject_claude(args.repo)
 
