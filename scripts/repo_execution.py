@@ -86,7 +86,7 @@ def _read_make_targets(path: Path) -> list[str]:
     seen: set[str] = set()
     with path.open(encoding="utf-8", errors="replace") as handle:
         for line in handle:
-            if not line or line.startswith("\t") or line.lstrip().startswith("#"):
+            if not line.strip() or line.startswith("\t") or line.lstrip().startswith("#"):
                 continue
             match = _MAKEFILE_TARGET_PATTERN.match(line)
             if not match:
@@ -152,6 +152,11 @@ def _string_dict(raw: dict[object, object]) -> dict[str, str]:
     return {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
 
 
+def _matches_script_keyword(name: str) -> bool:
+    tokens = [token for token in re.split(r"[^a-z0-9]+", name.lower()) if token]
+    return any(token in _SCRIPT_KEYWORDS for token in tokens)
+
+
 def _read_workflows(dir_path: Path) -> list[dict[str, object]]:
     if not dir_path.exists():
         return []
@@ -190,7 +195,7 @@ def _read_workflows(dir_path: Path) -> list[dict[str, object]]:
                             break
                         block_lines.append(next_line.strip())
                         i += 1
-                    cmd = " && ".join(part for part in block_lines if part)
+                    cmd = "\n".join(part for part in block_lines if part)
                 else:
                     cmd = run_value or None
 
@@ -245,14 +250,14 @@ def _quick_commands(
     seen: set[str] = set()
 
     for name in package_scripts:
-        if any(k in name.lower() for k in _SCRIPT_KEYWORDS):
+        if _matches_script_keyword(name):
             cmd = f"npm run {name}"
             if cmd not in seen:
                 seen.add(cmd)
                 commands.append(cmd)
 
     for target in make_targets:
-        if any(k in target.lower() for k in _SCRIPT_KEYWORDS):
+        if _matches_script_keyword(target):
             cmd = f"make {target}"
             if cmd not in seen:
                 seen.add(cmd)
@@ -263,7 +268,7 @@ def _quick_commands(
             cmd = f"poe {name.removeprefix('poe:')}"
         else:
             cmd = name
-        if any(k in name.lower() for k in _SCRIPT_KEYWORDS) and cmd not in seen:
+        if _matches_script_keyword(name) and cmd not in seen:
             seen.add(cmd)
             commands.append(cmd)
     return commands[:_MAX_QUICK_COMMANDS]
