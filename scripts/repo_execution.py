@@ -21,6 +21,9 @@ _SCRIPT_KEYWORDS = ("test", "build", "lint", "start", "dev", "check", "format")
 _MAX_WORKFLOW_RUN_COMMANDS = 12
 _MAX_MIGRATION_PATHS = 20
 _MAX_QUICK_COMMANDS = 20
+_MAKEFILE_TARGET_PATTERN = re.compile(r"^([A-Za-z0-9_.-]+)\s*:(?![=])")
+_WORKFLOW_NAME_PATTERN = re.compile(r"^\s*name:\s*(.+)\s*$")
+_WORKFLOW_RUN_PATTERN = re.compile(r"^(\s*)run:\s*(.*)\s*$")
 _MIGRATION_PATH_GLOBS = (
     "**/alembic/versions",
     "**/prisma/migrations",
@@ -67,7 +70,7 @@ def _read_package_scripts(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return {}
     scripts = data.get("scripts")
@@ -81,11 +84,11 @@ def _read_make_targets(path: Path) -> list[str]:
         return []
     targets: list[str] = []
     seen: set[str] = set()
-    with path.open(errors="replace") as handle:
+    with path.open(encoding="utf-8", errors="replace") as handle:
         for line in handle:
             if not line or line.startswith("\t") or line.lstrip().startswith("#"):
                 continue
-            match = re.match(r"^([A-Za-z0-9_.-]+)\s*:(?![=])", line)
+            match = _MAKEFILE_TARGET_PATTERN.match(line)
             if not match:
                 continue
             target = match.group(1)
@@ -100,7 +103,7 @@ def _read_pyproject_scripts(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     try:
-        data = tomllib.loads(path.read_text())
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError:
         return {}
 
@@ -155,19 +158,49 @@ def _read_workflows(dir_path: Path) -> list[dict[str, object]]:
 
     workflows: list[dict[str, object]] = []
     for wf in sorted(list(dir_path.glob("*.yml")) + list(dir_path.glob("*.yaml"))):
+        lines = wf.read_text(encoding="utf-8", errors="replace").splitlines()
         name = None
         run_commands: list[str] = []
-        with wf.open(errors="replace") as handle:
-            for line in handle:
-                if name is None:
-                    name_match = re.match(r"^\s*name:\s*(.+)\s*$", line)
-                    if name_match:
-                        name = name_match.group(1).strip().strip("\"'")
-                run_match = re.match(r"^\s*run:\s*(.+)\s*$", line)
-                if run_match:
-                    cmd = run_match.group(1).strip()
-                    if cmd and cmd not in run_commands:
-                        run_commands.append(cmd)
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if name is None:
+                name_match = _WORKFLOW_NAME_PATTERN.match(line)
+                if name_match:
+                    name = name_match.group(1).strip().strip("\"'")
+
+            run_match = _WORKFLOW_RUN_PATTERN.match(line)
+            if run_match:
+                run_indent = len(run_match.group(1))
+                run_value = run_match.group(2).strip()
+                cmd: str | None
+                consumed_block = False
+                if run_value in {"|", ">", "|-", ">-", "|+", ">+"}:
+                    block_lines: list[str] = []
+                    i += 1
+                    consumed_block = True
+                    while i < len(lines):
+                        next_line = lines[i]
+                        if not next_line.strip():
+                            block_lines.append("")
+                            i += 1
+                            continue
+                        next_indent = len(next_line) - len(next_line.lstrip(" "))
+                        if next_indent <= run_indent:
+                            break
+                        block_lines.append(next_line.strip())
+                        i += 1
+                    cmd = " && ".join(part for part in block_lines if part)
+                else:
+                    cmd = run_value or None
+
+                if cmd and cmd not in run_commands:
+                    run_commands.append(cmd)
+                if not consumed_block:
+                    i += 1
+                continue
+
+            i += 1
 
         workflows.append(
             {
