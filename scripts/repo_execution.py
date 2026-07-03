@@ -24,6 +24,7 @@ _MAX_QUICK_COMMANDS = 20
 _MAKEFILE_TARGET_PATTERN = re.compile(r"^([A-Za-z0-9_.-]+)\s*:(?![=])")
 _WORKFLOW_NAME_PATTERN = re.compile(r"^\s*name:\s*(.+)\s*$")
 _WORKFLOW_RUN_PATTERN = re.compile(r"^(\s*)run:\s*(.*)\s*$")
+_YAML_BLOCK_SCALAR_PATTERN = re.compile(r"^[|>][0-9]?[-+]?$")
 _MIGRATION_PATH_GLOBS = (
     "**/alembic/versions",
     "**/prisma/migrations",
@@ -180,7 +181,7 @@ def _read_workflows(dir_path: Path) -> list[dict[str, object]]:
                 run_value = run_match.group(2).strip()
                 cmd: str | None
                 consumed_block = False
-                if run_value in {"|", ">", "|-", ">-", "|+", ">+"}:
+                if _YAML_BLOCK_SCALAR_PATTERN.match(run_value):
                     block_lines: list[str] = []
                     i += 1
                     consumed_block = True
@@ -322,7 +323,8 @@ def _render_markdown(
             run_commands = wf.get("run_commands", [])
             if run_commands:
                 for cmd in run_commands:
-                    lines.append(f"  - `run: {cmd}`")
+                    display_cmd = cmd.replace("\n", " ⏎ ")
+                    lines.append(f"  - `run: {display_cmd}`")
     else:
         lines.append("- No GitHub Actions workflows detected.")
     lines.append("")
