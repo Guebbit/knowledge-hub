@@ -131,7 +131,7 @@ def _normalize_poe_task(value: object) -> str | None:
     if isinstance(value, str):
         return value
     if isinstance(value, list):
-        parts = [str(item) for item in value if isinstance(item, str)]
+        parts = [item for item in value if isinstance(item, str)]
         return " && ".join(parts) if parts else None
     if isinstance(value, dict):
         cmd = value.get("cmd")
@@ -139,7 +139,7 @@ def _normalize_poe_task(value: object) -> str | None:
             return cmd
         sequence = value.get("sequence")
         if isinstance(sequence, list):
-            parts = [str(item) for item in sequence if isinstance(item, str)]
+            parts = [item for item in sequence if isinstance(item, str)]
             return " && ".join(parts) if parts else None
     return None
 
@@ -273,8 +273,9 @@ def _render_markdown(
     lines.append("## CI Workflows")
     if workflows:
         for wf in workflows:
-            label = wf.get("name") or wf["file"]
-            lines.append(f"- `{wf['file']}` — {label}")
+            file_name = str(wf.get("file") or "unknown-workflow")
+            label = wf.get("name") or file_name
+            lines.append(f"- `{file_name}` — {label}")
             run_commands = wf.get("run_commands", [])
             if run_commands:
                 for cmd in run_commands:
