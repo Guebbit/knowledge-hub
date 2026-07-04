@@ -52,7 +52,6 @@ _REQUIRED_PIPELINE_ARTIFACTS = (
     Path("graphify-out/GRAPH_REPORT.md"),
     Path("graphify-out/EXECUTION.md"),
 )
-_EXCLUSIVE_MODE_FLAGS = ("--check", "--install-hook", "--query", "--remember", "--reindex")
 
 
 def _resolve_preset(name: str | None) -> tuple[str, str]:
@@ -389,7 +388,7 @@ def main() -> None:
         "--reindex": args.reindex,
     }
     if sum(bool(flag) for flag in mode_flags.values()) > 1:
-        die(f"{', '.join(_EXCLUSIVE_MODE_FLAGS)} are mutually exclusive")
+        die(f"{', '.join(mode_flags.keys())} are mutually exclusive")
 
     if args.check:
         sys.exit(_check(args.repo))
@@ -403,13 +402,17 @@ def main() -> None:
 
     if args.remember:
         _require_pipeline_artifacts(args.repo)
+        try:
+            existing_revision = str(repo_index.load_index(args.repo).get("revision") or "")
+        except (FileNotFoundError, ValueError):
+            existing_revision = ""
         entry = repo_memory.add_entry(
             args.repo,
             text=args.remember,
             kind=args.memory_kind,
             source=args.memory_source,
             head=_resolve_head(args.repo),
-            index_revision="",
+            index_revision=existing_revision,
         )
         print(f"Memory   : stored [{entry['kind']}] {entry['text']}")
         layers = _build_layers(args.repo, provider=provider, model=model, mode="memory-update")
