@@ -284,7 +284,7 @@ def load_index(repo_path: str) -> dict[str, object]:
 def semantic_query(repo_path: str, *, text: str, top_k: int = 5) -> list[dict[str, object]]:
     query_text = text.strip()
     if not query_text:
-        raise ValueError("query text cannot be empty")
+        raise ValueError("query text cannot be empty or contain only whitespace")
 
     data = load_index(repo_path)
     idf = data.get("idf")

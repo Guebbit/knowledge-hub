@@ -25,7 +25,7 @@ def _memory_report_file(repo: Path) -> Path:
 def _normalize_text(text: str) -> str:
     normalized = re.sub(r"\s+", " ", text).strip()
     if not normalized:
-        raise ValueError("memory text cannot be empty")
+        raise ValueError("memory text cannot be empty or contain only whitespace")
     return normalized
 
 
@@ -91,7 +91,9 @@ def add_entry(
     normalized_text = _normalize_text(text)
     normalized_kind = kind.strip().lower()
     if normalized_kind not in {"fact", "decision", "runbook"}:
-        raise ValueError("memory kind must be one of: fact, decision, runbook")
+        raise ValueError(
+            f"memory kind must be one of: fact, decision, runbook (got '{normalized_kind}')"
+        )
 
     entries = load_entries(repo_path)
     for entry in entries:

@@ -52,6 +52,7 @@ _REQUIRED_PIPELINE_ARTIFACTS = (
     Path("graphify-out/GRAPH_REPORT.md"),
     Path("graphify-out/EXECUTION.md"),
 )
+_EXCLUSIVE_MODE_FLAGS = ("--check", "--install-hook", "--query", "--remember", "--reindex")
 
 
 def _resolve_preset(name: str | None) -> tuple[str, str]:
@@ -380,9 +381,15 @@ def main() -> None:
     if not Path(args.repo).is_dir():
         die(f"not a directory: {args.repo}")
 
-    mode_flags = [args.check, args.install_hook, bool(args.query), bool(args.remember), args.reindex]
-    if sum(bool(flag) for flag in mode_flags) > 1:
-        die("--check, --install-hook, --query, --remember, and --reindex are mutually exclusive")
+    mode_flags = {
+        "--check": args.check,
+        "--install-hook": args.install_hook,
+        "--query": bool(args.query),
+        "--remember": bool(args.remember),
+        "--reindex": args.reindex,
+    }
+    if sum(bool(flag) for flag in mode_flags.values()) > 1:
+        die(f"{', '.join(_EXCLUSIVE_MODE_FLAGS)} are mutually exclusive")
 
     if args.check:
         sys.exit(_check(args.repo))

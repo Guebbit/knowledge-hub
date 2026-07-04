@@ -6,6 +6,7 @@ from pathlib import Path
 
 _MARKER_START = "<!-- 2repo:start — regenerate with: 2repo . -->"
 _MARKER_END = "<!-- 2repo:end -->"
+_MARKER_PATTERN = re.compile(re.escape(_MARKER_START) + r".*?" + re.escape(_MARKER_END), re.DOTALL)
 
 
 _CLAUDE_INLINE = (
@@ -40,8 +41,7 @@ def _replace_or_append(path: Path, *, block: str) -> None:
     if path.exists():
         content = path.read_text(encoding="utf-8")
         if _MARKER_START in content:
-            pattern = re.compile(re.escape(_MARKER_START) + r".*?" + re.escape(_MARKER_END), re.DOTALL)
-            updated = pattern.sub(block, content)
+            updated = _MARKER_PATTERN.sub(block, content)
             path.write_text(updated, encoding="utf-8")
             return
         path.write_text(content.rstrip() + "\n\n" + block + "\n", encoding="utf-8")
