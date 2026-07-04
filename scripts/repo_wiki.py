@@ -274,7 +274,7 @@ def generate(
     graph_files, adjacency = load_graph(repo_path)
     if not graph_files and not adjacency:
         raise FileNotFoundError(
-            f"graph not found or empty: {repo / _GRAPH_JSON_SUBPATH} — run 2repo first"
+            f"graph not found or empty: {repo / _GRAPH_JSON_SUBPATH} — run '2repo graph <repo>' first"
         )
     graph_files.update(adjacency)
 

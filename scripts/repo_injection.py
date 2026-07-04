@@ -172,7 +172,7 @@ def write_repo_context(
     if wiki_dir.is_dir() and any(wiki_dir.glob("*.md")):
         lines.append(
             "- `graphify-out/wiki/` — living wiki: per-file documentation pages "
-            "plus `OVERVIEW.md` (generated — do not edit by hand; regenerate with `2repo <repo-path> --wiki`)"
+            "plus `OVERVIEW.md` (generated — do not edit by hand; regenerate with `2repo wiki <repo-path>`)"
         )
     lines.append("")
     lines.append("## Index Metadata")
@@ -183,8 +183,8 @@ def write_repo_context(
     lines.append(f"- Memory entries: `{memory_count}`")
     lines.append("")
     lines.append("## Query")
-    lines.append("- Semantic query: `2repo <repo-path> --query \"your question\" --top-k 5`")
-    lines.append("- Add durable memory: `2repo <repo-path> --remember \"fact/decision/runbook\" --memory-kind fact`")
+    lines.append("- Semantic query: `2repo query <repo-path> \"your question\" --top-k 5`")
+    lines.append("- Add durable memory: `2repo remember <repo-path> \"fact/decision/runbook\" --kind fact`")
     lines.append("")
 
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
