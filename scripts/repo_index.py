@@ -27,6 +27,7 @@ _QUERY_EXPANSION_TERMS = 8
 _QUERY_EXPANSION_WEIGHT = 0.35
 _BASE_SCORE_WEIGHT = 0.65
 _EXPANDED_SCORE_WEIGHT = 0.35
+_EXPANSION_SEED_TERMS_PER_CHUNK = 25
 
 
 def _now_iso() -> str:
@@ -41,6 +42,7 @@ def _tokenize(text: str) -> list[str]:
     tokens: list[str] = []
     for token in _TOKEN_PATTERN.findall(text.lower()):
         tokens.append(token)
+        # Lightweight plural normalization for retrieval recall (not a full stemmer).
         if token.endswith("s") and len(token) > 3 and not token.endswith("ss"):
             tokens.append(token[:-1])
     return tokens
@@ -157,6 +159,7 @@ def _compute_idf(chunk_token_sets: list[set[str]]) -> dict[str, float]:
     for tokens in chunk_token_sets:
         df.update(tokens)
     # Smoothed IDF keeps values > 0 for very common terms and avoids division by zero.
+    # The final +1.0 offset avoids zeroing weights when df ~= docs and stabilizes ranking.
     return {token: math.log((1.0 + docs) / (1.0 + count)) + 1.0 for token, count in df.items()}
 
 
@@ -326,7 +329,7 @@ def semantic_query(repo_path: str, *, text: str, top_k: int = 5) -> list[dict[st
         chunk = item["chunk"]
         vector = chunk["vector"]
         ranked_terms = sorted(vector.items(), key=lambda kv: kv[1], reverse=True)
-        for token, weight in ranked_terms[:25]:
+        for token, weight in ranked_terms[:_EXPANSION_SEED_TERMS_PER_CHUNK]:
             if token in query_set:
                 continue
             expansion[token] += float(weight)

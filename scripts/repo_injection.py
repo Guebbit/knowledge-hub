@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 
-_MARKER_START = "<!-- 2repo:start — regenerate with: 2repo . -->"
+_MARKER_START = "<!-- 2repo:start — regenerate with: 2repo <repo-path> -->"
 _MARKER_END = "<!-- 2repo:end -->"
 _MARKER_PATTERN = re.compile(re.escape(_MARKER_START) + r".*?" + re.escape(_MARKER_END), re.DOTALL)
 

@@ -96,13 +96,14 @@ def add_entry(
         )
 
     entries = load_entries(repo_path)
-    for entry in entries:
-        if entry["text"].casefold() == normalized_text.casefold() and entry["kind"] == normalized_kind:
-            entry["source"] = source.strip() or "manual"
-            entry["head"] = head
-            entry["index_revision"] = index_revision
-            _write_entries(repo, entries)
-            return entry
+    lookup = {(entry["kind"], entry["text"].casefold()): entry for entry in entries}
+    duplicate = lookup.get((normalized_kind, normalized_text.casefold()))
+    if duplicate:
+        duplicate["source"] = source.strip() or "manual"
+        duplicate["head"] = head
+        duplicate["index_revision"] = index_revision
+        _write_entries(repo, entries)
+        return duplicate
 
     digest = hashlib.sha256(f"{normalized_kind}:{normalized_text}".encode("utf-8")).hexdigest()
     entry = {

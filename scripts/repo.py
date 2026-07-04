@@ -52,6 +52,7 @@ _REQUIRED_PIPELINE_ARTIFACTS = (
     Path("graphify-out/GRAPH_REPORT.md"),
     Path("graphify-out/EXECUTION.md"),
 )
+_QUERY_EXCERPT_LENGTH = 320
 
 
 def _resolve_preset(name: str | None) -> tuple[str, str]:
@@ -354,7 +355,7 @@ def _query(repo_path: str, query_text: str, top_k: int) -> int:
         kind = item.get("kind")
         score = item.get("score")
         text = str(item.get("text") or "").replace("\n", " ").strip()
-        excerpt = text[:320] + ("..." if len(text) > 320 else "")
+        excerpt = text[:_QUERY_EXCERPT_LENGTH] + ("..." if len(text) > _QUERY_EXCERPT_LENGTH else "")
         print(f"{idx}. [{kind}] {source} (score={score})")
         print(f"   {excerpt}")
     return 0
@@ -388,7 +389,8 @@ def main() -> None:
         "--reindex": args.reindex,
     }
     if sum(bool(flag) for flag in mode_flags.values()) > 1:
-        die(f"{', '.join(mode_flags.keys())} are mutually exclusive")
+        selected = ", ".join(name for name, enabled in mode_flags.items() if enabled)
+        die(f"cannot combine exclusive mode flags: {selected}")
 
     if args.check:
         sys.exit(_check(args.repo))
