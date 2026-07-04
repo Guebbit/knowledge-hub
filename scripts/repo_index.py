@@ -27,6 +27,7 @@ _SKIP_INDEX_PATHS = {
     "graphify-out/.2repo-state.json",
     "graphify-out/repo-index.json",
     "graphify-out/repo-memory.json",
+    "graphify-out/wiki/.wiki-cache.json",
 }
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]{2,}")
 _MAX_CHUNK_CHARS = 1200

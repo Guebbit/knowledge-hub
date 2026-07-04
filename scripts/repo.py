@@ -11,6 +11,10 @@ Usage (via 2repo.sh alias):
   2repo . --query "how do I run tests?" --top-k 5
   2repo . --remember "Use pytest -q for unit tests" --memory-kind runbook
   2repo . --reindex             # rebuild semantic index + selected AI injection from existing artifacts
+  2repo . --wiki                # incremental LLM wiki (changed files + 2-hop graph neighbors)
+  2repo . --wiki --force-all    # full wiki rebuild (ignore cache and baseline)
+  2repo . --wiki --dry-run      # list pages that would be regenerated (no LLM calls)
+  2repo . --wiki --mirror-vault # also copy wiki pages into the Obsidian vault (Projects/<repo>)
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ import config
 import repo_index
 import repo_injection
 import repo_memory
+import repo_wiki
 from repo_execution import generate as execution_generate
 from utils import die
 
@@ -64,6 +69,16 @@ _AI_TARGET_PROMPT = (
 
 def _resolve_preset(name: str | None) -> tuple[str, str]:
     preset_name = (name or os.getenv("REPO_PRESET_GRAPH", "")).lower()
+    if not preset_name:
+        return config.PROVIDER, config.MODEL
+    if preset_name not in config.PRESETS:
+        die(f"preset '{preset_name}' not defined — add PRESET_{preset_name.upper()}=provider:model to .env")
+    return config.PRESETS[preset_name]
+
+
+def _resolve_wiki_preset(name: str | None) -> tuple[str, str]:
+    """Resolve the wiki model preset: --preset > REPO_PRESET_WIKI > REPO_PRESET_GRAPH > default."""
+    preset_name = (name or os.getenv("REPO_PRESET_WIKI", "") or os.getenv("REPO_PRESET_GRAPH", "")).lower()
     if not preset_name:
         return config.PROVIDER, config.MODEL
     if preset_name not in config.PRESETS:
@@ -243,6 +258,7 @@ def _install_hook(repo_path: str) -> int:
     hooks_dir.mkdir(parents=True, exist_ok=True)
     hook_path = hooks_dir / "post-commit"
     threshold = _resolve_threshold()
+    wiki_auto = "1" if (os.getenv("REPO_WIKI_AUTO") or "").strip() == "1" else "0"
     hook = f"""#!/usr/bin/env bash
 set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -264,12 +280,19 @@ threshold="{threshold}"
 if [[ "${{threshold}}" -gt 0 && "${{changed}}" -ge "${{threshold}}" ]]; then
   echo "2repo warning: graph may be stale (${{changed}} files changed since last generation, threshold=${{threshold}})." >&2
   echo "Run: 2repo . --update   (or full run: 2repo .)" >&2
+  echo "Wiki: 2repo . --wiki    (incremental wiki refresh for changed files)" >&2
+fi
+
+if [[ "{wiki_auto}" == "1" && "${{changed}}" -gt 0 ]] && command -v 2repo >/dev/null 2>&1; then
+  echo "2repo: refreshing wiki incrementally (REPO_WIKI_AUTO=1)..." >&2
+  2repo "${{repo_root}}" --wiki || echo "2repo: wiki refresh failed — run manually: 2repo . --wiki" >&2
 fi
 """
     hook_path.write_text(hook)
     hook_path.chmod(0o755)
     print(f"Hook     : installed stale-warning hook in {hook_path}")
     print(f"Hook     : threshold={threshold} (set REPO_STALE_THRESHOLD to change)")
+    print(f"Hook     : wiki auto-refresh {'enabled' if wiki_auto == '1' else 'disabled'} (set REPO_WIKI_AUTO=1 before --install-hook to enable)")
     return 0
 
 
@@ -402,6 +425,71 @@ def _query(repo_path: str, query_text: str, top_k: int) -> int:
     return 0
 
 
+def _baseline_changed_files(repo_path: str) -> set[str] | None:
+    """Return files changed since the .2repo-state.json baseline, or None if unusable."""
+    if not _in_git_repo(repo_path):
+        return None
+    state = _read_state(repo_path)
+    if not state:
+        return None
+    base_commit = str(state.get("head", "")).strip()
+    if not base_commit:
+        return None
+    if _git_capture(repo_path, ["cat-file", "-e", f"{base_commit}^{{commit}}"]).returncode != 0:
+        return None
+    return _changed_files_since(repo_path, base_commit)
+
+
+def _wiki(
+    repo_path: str,
+    *,
+    provider: str,
+    model: str,
+    ai_target: str,
+    force_all: bool,
+    dry_run: bool,
+    mirror_vault: bool,
+) -> int:
+    """Generate/update the living wiki, then refresh index + context so pages are retrievable."""
+    changed = None if force_all else _baseline_changed_files(repo_path)
+    if changed is None and not force_all:
+        print("Wiki     : no usable baseline — considering all graph files (hash cache still applies)")
+
+    # providers.call_llm reads config.PROVIDER/config.MODEL at call time.
+    config.PROVIDER = provider
+    config.MODEL = model
+
+    try:
+        summary = repo_wiki.generate(
+            repo_path,
+            changed_files=changed,
+            force_all=force_all,
+            dry_run=dry_run,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        die(str(exc))
+
+    if dry_run:
+        return 0
+
+    # Fold wiki pages into the semantic index and canonical context.
+    # State is intentionally NOT rewritten: the graph baseline must only move
+    # when graphify itself runs, otherwise --check would report a stale graph as fresh.
+    _build_layers(repo_path, provider=provider, model=model, mode="wiki", ai_target=ai_target)
+
+    if mirror_vault:
+        try:
+            destination = repo_wiki.mirror_to_vault(repo_path, config.VAULT_PATH)
+        except FileNotFoundError as exc:
+            die(str(exc))
+        print(f"Wiki     : mirrored to {destination}")
+
+    written = summary.get("written") or []
+    removed = summary.get("removed") or []
+    print(f"Wiki     : done ({len(written)} written, {len(removed)} pruned, {summary.get('page_count')} pages total)")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate and query repository intelligence artifacts with 2repo"
@@ -417,6 +505,10 @@ def main() -> None:
     parser.add_argument("--memory-kind", choices=["fact", "decision", "runbook"], default="fact", help="Memory type for --remember (default: fact)")
     parser.add_argument("--memory-source", default="manual", metavar="SOURCE", help="Memory source label for --remember (default: manual)")
     parser.add_argument("--reindex", action="store_true", help="Rebuild semantic index, context, and selected AI injection from existing artifacts")
+    parser.add_argument("--wiki", action="store_true", help="Generate/update the living wiki (graphify-out/wiki/) incrementally via LLM")
+    parser.add_argument("--force-all", action="store_true", help="With --wiki: full rebuild, ignoring cache and baseline")
+    parser.add_argument("--dry-run", action="store_true", help="With --wiki: list pages that would regenerate, without calling the LLM")
+    parser.add_argument("--mirror-vault", action="store_true", help="With --wiki: copy wiki pages into the Obsidian vault (Projects/<repo-name>)")
     parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
     args = parser.parse_args()
 
@@ -429,10 +521,14 @@ def main() -> None:
         "--query": bool(args.query),
         "--remember": bool(args.remember),
         "--reindex": args.reindex,
+        "--wiki": args.wiki,
     }
     if sum(bool(flag) for flag in mode_flags.values()) > 1:
         selected = ", ".join(name for name, enabled in mode_flags.items() if enabled)
         die(f"cannot combine exclusive mode flags: {selected}")
+
+    if not args.wiki and (args.force_all or args.dry_run or args.mirror_vault):
+        die("--force-all, --dry-run, and --mirror-vault require --wiki")
 
     if args.check:
         sys.exit(_check(args.repo))
@@ -440,6 +536,24 @@ def main() -> None:
         sys.exit(_install_hook(args.repo))
     if args.query:
         sys.exit(_query(args.repo, args.query, max(1, args.top_k)))
+
+    if args.wiki:
+        provider, model = _resolve_wiki_preset(args.preset)
+        ai_target = "neutral" if args.dry_run else _resolve_ai_target(args.ai_target)
+        print(f"Provider : {provider}  |  Model: {model}")
+        if not args.dry_run:
+            print(f"AI target: {ai_target}")
+        sys.exit(
+            _wiki(
+                args.repo,
+                provider=provider,
+                model=model,
+                ai_target=ai_target,
+                force_all=args.force_all,
+                dry_run=args.dry_run,
+                mirror_vault=args.mirror_vault,
+            )
+        )
 
     provider, model = _resolve_preset(args.preset)
     ai_target = _resolve_ai_target(args.ai_target)

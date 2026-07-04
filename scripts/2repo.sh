@@ -12,6 +12,10 @@
 #   2repo . --query "how do I run tests?"
 #   2repo . --remember "Use make test" --memory-kind runbook
 #   2repo . --reindex
+#   2repo . --wiki                       # incremental LLM wiki (changed files + graph neighbors)
+#   2repo . --wiki --force-all           # full wiki rebuild
+#   2repo . --wiki --dry-run             # preview which pages would regenerate
+#   2repo . --wiki --mirror-vault        # also copy wiki pages into the Obsidian vault
 #
 # Register globally:
 #   alias 2repo="$HOME/knowledge-hub/scripts/2repo.sh"
@@ -40,7 +44,7 @@ done
 
 if [[ -z "$REPO_PATH" ]]; then
     echo "ERROR: provide a path to the target repository (or '.' for current directory)" >&2
-    echo "Usage: 2repo . [--update] [--check] [--install-hook] [--preset NAME] [--ai-target TARGET] [--query TEXT] [--remember TEXT] [--reindex]" >&2
+    echo "Usage: 2repo . [--update] [--check] [--install-hook] [--preset NAME] [--ai-target TARGET] [--query TEXT] [--remember TEXT] [--reindex] [--wiki [--force-all|--dry-run|--mirror-vault]]" >&2
     exit 1
 fi
 

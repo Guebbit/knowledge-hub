@@ -168,6 +168,12 @@ def write_repo_context(
     lines.append("## Core Artifacts")
     for artifact_path, description in _CONTEXT_ARTIFACTS:
         lines.append(f"- `{artifact_path}` — {description}")
+    wiki_dir = repo / "graphify-out" / "wiki"
+    if wiki_dir.is_dir() and any(wiki_dir.glob("*.md")):
+        lines.append(
+            "- `graphify-out/wiki/` — living wiki: per-file documentation pages "
+            "plus `OVERVIEW.md` (generated — do not edit by hand; regenerate with `2repo <repo-path> --wiki`)"
+        )
     lines.append("")
     lines.append("## Index Metadata")
     lines.append(f"- Provider: `{provider}`")
