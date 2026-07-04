@@ -353,8 +353,15 @@ def _resolve_ai_target(cli_target: str | None = None) -> str:
             die(f"invalid --ai-target '{cli_target}' (expected one of: {', '.join(_AI_TARGETS)})")
         return cli_target
 
+    env_target = (os.getenv("REPO_AI_TARGET") or "").strip().lower()
+    if env_target:
+        if env_target not in _AI_TARGETS:
+            die(f"invalid REPO_AI_TARGET '{env_target}' (expected one of: {', '.join(_AI_TARGETS)})")
+        print(f"AI target: using REPO_AI_TARGET={env_target}")
+        return env_target
+
     if not sys.stdin.isatty():
-        print("AI target: non-interactive session detected, defaulting to neutral")
+        print("AI target: non-interactive session detected, defaulting to neutral (set --ai-target or REPO_AI_TARGET to override)")
         return "neutral"
 
     print("AI target: select which integration files to generate")
@@ -362,7 +369,7 @@ def _resolve_ai_target(cli_target: str | None = None) -> str:
         print(f"  {key}) {label} ({value})")
 
     while True:
-        choice = input("Select AI target [1-4 or claude/copilot/cursor/neutral]: ").strip().lower()
+        choice = input("Select AI target (1-4 or name): ").strip().lower()
         for key, value, _ in _AI_TARGET_PROMPT:
             if choice == key or choice == value:
                 return value
