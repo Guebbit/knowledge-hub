@@ -96,12 +96,16 @@ YOUR BRAIN (ADHD)
 │  opens a repo      →  2repo ~/Work/my-repo
 │                              │
 │                              ├── graphify-out/
-│                              │    └── GRAPH_REPORT.md  ← AI assistant starts here
+│                              │    ├── GRAPH_REPORT.md
+│                              │    ├── EXECUTION.md
+│                              │    ├── REPO_MEMORY.md
+│                              │    ├── repo-index.json
+│                              │    └── REPO_CONTEXT.md  ← AI assistant starts here
 │                              │
-│                              └── graphify-out/
-│                                          │
-│                                   REPORT + EXECUTION + MEMORY
-│                                   + semantic index + context
+│                              └── selected AI bridge file
+│                                   (.claude/KNOWLEDGE.md, CLAUDE.md,
+│                                   .github/copilot-instructions.md,
+│                                   or .cursor/rules/2repo.mdc)
 ```
 
 **One rule:** every time you learn something or start working on a repo, run the command. Never decide what to write or how to format it. The AI does that. You just capture and move on.

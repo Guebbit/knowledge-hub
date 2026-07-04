@@ -22,6 +22,7 @@ _CONTEXT_REFERENCE_PATHS = (
     "graphify-out/GRAPH_REPORT.md",
     "graphify-out/EXECUTION.md",
     "graphify-out/REPO_MEMORY.md",
+    "graphify-out/repo-index.json",
 )
 _CONTEXT_ARTIFACTS = (
     ("graphify-out/GRAPH_REPORT.md", "structural and semantic code graph report"),
@@ -41,6 +42,10 @@ _AI_TARGETS = ("claude", "copilot", "cursor", "neutral")
 
 def _expanded_sources_inline() -> str:
     return ", ".join(f"`{path}`" for path in _CONTEXT_REFERENCE_PATHS)
+
+
+def _claude_knowledge_pointer() -> str:
+    return f"@../{_PRIMARY_CONTEXT_PATH}\n"
 
 
 def _copilot_inline() -> str:
@@ -71,8 +76,11 @@ def _cursor_rule() -> str:
 
 
 def _write_if_changed(path: Path, *, content: str) -> bool:
-    if path.exists() and path.read_text(encoding="utf-8") == content:
-        return False
+    if path.exists():
+        if path.read_text(encoding="utf-8") == content:
+            return False
+        path.write_text(content, encoding="utf-8")
+        return True
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return True
@@ -84,8 +92,8 @@ def _replace_or_append(path: Path, *, block: str) -> bool:
         content = path.read_text(encoding="utf-8")
         if _MARKER_START in content:
             updated = _MARKER_PATTERN.sub(block, content)
-        else:
-            updated = content.rstrip() + "\n\n" + block + "\n"
+            return _write_if_changed(path, content=updated)
+        updated = content.rstrip() + "\n\n" + block + "\n"
         return _write_if_changed(path, content=updated)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(block + "\n", encoding="utf-8")
@@ -95,7 +103,7 @@ def _replace_or_append(path: Path, *, block: str) -> bool:
 def _inject_claude(repo: Path) -> list[str]:
     outputs: list[str] = []
     knowledge = repo / ".claude" / "KNOWLEDGE.md"
-    if _write_if_changed(knowledge, content="@../graphify-out/REPO_CONTEXT.md\n"):
+    if _write_if_changed(knowledge, content=_claude_knowledge_pointer()):
         outputs.append(str(knowledge))
 
     claude_md = repo / "CLAUDE.md"
@@ -114,10 +122,15 @@ def _inject_cursor(repo: Path) -> list[str]:
     return [str(cursor_rule)] if _write_if_changed(cursor_rule, content=_cursor_rule()) else []
 
 
+def _inject_neutral(_repo: Path) -> list[str]:
+    return []
+
+
 _TARGET_WRITERS: dict[str, Callable[[Path], list[str]]] = {
     "claude": _inject_claude,
     "copilot": _inject_copilot,
     "cursor": _inject_cursor,
+    "neutral": _inject_neutral,
 }
 
 
@@ -130,8 +143,7 @@ def inject_for_target(repo_path: str, *, ai_target: str) -> list[str]:
     if ai_target not in _AI_TARGETS:
         raise ValueError(f"invalid ai target '{ai_target}' (expected one of: {', '.join(_AI_TARGETS)})")
 
-    writer = _TARGET_WRITERS.get(ai_target)
-    return writer(repo) if writer else []
+    return _TARGET_WRITERS[ai_target](repo)
 
 
 def write_repo_context(
