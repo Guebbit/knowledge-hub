@@ -41,45 +41,43 @@ This system externalizes both problems.
 
 ---
 
-### Piece 2 — graphify (`2repo` → `graphify-out/GRAPH_REPORT.md`)
+### Piece 2 — repository context (`2repo` → `graphify-out/*`)
 
-**What it is:** a single AI-generated file that summarizes an entire codebase and lives inside that repo.
+**What it is:** deterministic repository artifacts generated inside the repo (`graphify-out/*`) plus one optional editor bridge file for your selected AI target.
 
-**How it works:** `2repo ~/Work/my-repo` reads the repo, calls graphify, writes `graphify-out/GRAPH_REPORT.md`, and injects it into `CLAUDE.md` so Claude Code auto-loads it at session start.
+**How it works:** `2repo ~/Work/my-repo` reads the repo, calls graphify, and builds canonical artifacts (`GRAPH_REPORT.md`, `EXECUTION.md`, `REPO_MEMORY.md`, `repo-index.json`, `REPO_CONTEXT.md`). Then it writes only the selected AI bridge file (Claude/Copilot/Cursor) that points to `REPO_CONTEXT.md`.
 
 **Why it matters:**
 
 When you open a project in Claude Code (or any AI assistant), the AI starts cold — it knows nothing about your codebase. It has to read dozens of files to understand the structure, burning through its context window before you've asked a single question.
 
-With `graphify-out/GRAPH_REPORT.md`, the AI starts every session already knowing:
+With `graphify-out/REPO_CONTEXT.md`, the AI starts every session already knowing:
 - What the repo does (purpose)
 - Which files do what (key files table)
 - How modules depend on each other (Mermaid diagram)
 - What conventions to follow and what to avoid
+- How to build/test/run it
 
-One file. Zero wasted context. The AI is useful from the first message.
+One canonical source. Zero duplicated AI-specific summaries. The AI is useful from the first message.
 
 **For humans too:** open `graphify-out/GRAPH_REPORT.md` and understand any repo in 30 seconds — no need to read 50 files.
 
 ---
 
-### Piece 3 — llm-wiki (`2repo --wiki` → Obsidian)
+### Piece 3 — operational recall (`2repo --query` + memory)
 
-**What it is:** an AI-generated wiki for a codebase that lives in your Obsidian vault, cross-linked with your other notes.
+**What it is:** semantic recall on top of generated artifacts, with durable repository memory entries.
 
-**How it works:** `2repo ~/Work/my-repo` also generates `vault/Projects/my-repo/` with multiple notes: index, architecture, setup guide, module diagrams, component deep-dives.
+**How it works:** `2repo --query "question"` retrieves ranked snippets from `graphify-out/*`; `2repo --remember` stores durable facts/decisions/runbooks for future retrieval.
 
 **Why it matters for ADHD:**
 
 Coming back to a project after weeks away means re-reading everything. With ADHD, that re-reading costs real time and attention — and the context still doesn't fully load.
 
-With the llm-wiki in Obsidian:
-- Open `index.md` → instant overview, what this repo does, how to run it
-- Open `architecture.md` → why things are structured the way they are
-- Open `setup.md` → exact commands to get it running again
-- Follow `[[wikilinks]]` to related notes from your second brain
-
-The project becomes a first-class citizen in your Obsidian graph, connected to your personal notes, research, and decisions about it.
+With retrieval + durable memory:
+- Ask a repo question and get immediate, grounded snippets
+- Store key decisions so they survive context resets
+- Rehydrate project context after breaks without re-reading everything
 
 ---
 
@@ -100,11 +98,10 @@ YOUR BRAIN (ADHD)
 │                              ├── graphify-out/
 │                              │    └── GRAPH_REPORT.md  ← AI assistant starts here
 │                              │
-│                              └── vault/Projects/my-repo/
+│                              └── graphify-out/
 │                                          │
-│                                   index, architecture, setup,
-│                                   diagrams — all in Obsidian,
-│                                   linked to your personal notes
+│                                   REPORT + EXECUTION + MEMORY
+│                                   + semantic index + context
 ```
 
 **One rule:** every time you learn something or start working on a repo, run the command. Never decide what to write or how to format it. The AI does that. You just capture and move on.
