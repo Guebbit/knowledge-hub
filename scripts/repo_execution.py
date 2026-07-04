@@ -68,6 +68,7 @@ def generate(repo_path: str) -> None:
 
 
 def _read_package_scripts(path: Path) -> dict[str, str]:
+    """Read package.json scripts as a string->string map."""
     if not path.exists():
         return {}
     try:
@@ -81,6 +82,7 @@ def _read_package_scripts(path: Path) -> dict[str, str]:
 
 
 def _read_make_targets(path: Path) -> list[str]:
+    """Parse user-invokable Makefile targets, excluding internals/pattern rules."""
     if not path.exists():
         return []
     targets: list[str] = []
@@ -101,6 +103,7 @@ def _read_make_targets(path: Path) -> list[str]:
 
 
 def _read_pyproject_scripts(path: Path) -> dict[str, str]:
+    """Collect runnable script/task definitions from common pyproject sections."""
     if not path.exists():
         return {}
     try:
@@ -133,6 +136,7 @@ def _read_pyproject_scripts(path: Path) -> dict[str, str]:
 
 
 def _normalize_poe_task(value: object) -> str | None:
+    """Normalize Poe task definitions (string/list/dict) into one shell command."""
     if isinstance(value, str):
         return value
     if isinstance(value, list):
@@ -150,15 +154,18 @@ def _normalize_poe_task(value: object) -> str | None:
 
 
 def _string_dict(raw: dict[object, object]) -> dict[str, str]:
+    """Filter a mixed dict to only string keys and string values."""
     return {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
 
 
 def _matches_script_keyword(name: str) -> bool:
+    """Return True when a script name hints at build/test/lint/dev style usage."""
     tokens = [token for token in re.split(r"[^a-z0-9]+", name.lower()) if token]
     return any(token in _SCRIPT_KEYWORDS for token in tokens)
 
 
 def _read_workflows(dir_path: Path) -> list[dict[str, object]]:
+    """Extract workflow names and run commands from GitHub Actions YAML files."""
     if not dir_path.exists():
         return []
 
@@ -219,6 +226,7 @@ def _read_workflows(dir_path: Path) -> list[dict[str, object]]:
 
 
 def _read_migrations(repo: Path) -> tuple[list[str], list[str]]:
+    """Find likely migration directories and migration-tool hint files."""
     migration_paths: list[str] = []
     seen_paths: set[str] = set()
     for pattern in _MIGRATION_PATH_GLOBS:
@@ -247,6 +255,7 @@ def _quick_commands(
     make_targets: list[str],
     pyproject_scripts: dict[str, str],
 ) -> list[str]:
+    """Build a short, deduplicated list of likely day-to-day project commands."""
     commands: list[str] = []
     seen: set[str] = set()
 
@@ -284,6 +293,7 @@ def _render_markdown(
     migration_paths: list[str],
     migration_hints: list[str],
 ) -> str:
+    """Render extracted execution metadata into EXECUTION.md markdown."""
     lines: list[str] = []
     lines.append("# Execution Knowledge")
     lines.append("")

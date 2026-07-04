@@ -5,11 +5,13 @@
 #   2repo .                              # graph for the current directory
 #   2repo ~/Work/my-repo                 # graph for a specific repo
 #   2repo . --update                     # incremental update (changed files only)
-#   2repo . --wiki                       # also generate LLM wiki in vault/Projects/
-#   2repo . --wiki -f Reference          # wiki in vault/Reference/
 #   2repo . --check                      # check if graph may be stale
 #   2repo . --install-hook               # install stale-warning post-commit hook
 #   2repo . --preset smart               # override AI preset
+#   2repo . --ai-target copilot          # generate only Copilot integration files
+#   2repo . --query "how do I run tests?"
+#   2repo . --remember "Use make test" --memory-kind runbook
+#   2repo . --reindex
 #
 # Register globally:
 #   alias 2repo="$HOME/knowledge-hub/scripts/2repo.sh"
@@ -38,7 +40,7 @@ done
 
 if [[ -z "$REPO_PATH" ]]; then
     echo "ERROR: provide a path to the target repository (or '.' for current directory)" >&2
-    echo "Usage: 2repo . [--update] [--wiki] [--check] [--install-hook] [--preset NAME]" >&2
+    echo "Usage: 2repo . [--update] [--check] [--install-hook] [--preset NAME] [--ai-target TARGET] [--query TEXT] [--remember TEXT] [--reindex]" >&2
     exit 1
 fi
 

@@ -19,6 +19,7 @@ WHISPER_SIZES = {"tiny", "base", "small", "medium", "large-v2", "large-v3"}
 
 
 def cmd_pull(target: str) -> None:
+    """Download/cache a supported model target (currently whisper/<size>)."""
     kind, _, size = target.partition("/")
     if kind != "whisper":
         _die(f"Unknown model type '{kind}'. Only 'whisper' is supported.")
@@ -40,6 +41,7 @@ def cmd_pull(target: str) -> None:
 
 
 def cmd_list() -> None:
+    """List downloaded Whisper model directories and approximate disk usage."""
     whisper_dir = MODELS_PATH / "whisper"
     if not whisper_dir.exists():
         print("No models downloaded yet.")
@@ -58,6 +60,7 @@ def cmd_list() -> None:
 
 
 def cmd_delete(target: str) -> None:
+    """Delete one cached model directory (whisper/<size>)."""
     kind, _, size = target.partition("/")
     if kind != "whisper":
         _die(f"Unknown model type '{kind}'.")
@@ -72,11 +75,13 @@ def cmd_delete(target: str) -> None:
 
 
 def _die(msg: str) -> None:
+    """Print an error message and terminate with non-zero exit status."""
     print(f"Error: {msg}", file=sys.stderr)
     sys.exit(1)
 
 
 def _usage() -> None:
+    """Print module docstring usage text and exit."""
     print(__doc__)
     sys.exit(1)
 
