@@ -367,13 +367,15 @@ def _resolve_ai_target(cli_target: str | None = None) -> str:
     print("AI target: select which integration files to generate")
     for key, value, label in _AI_TARGET_PROMPT:
         print(f"  {key}) {label} ({value})")
+    max_option = len(_AI_TARGET_PROMPT)
+    prompt = f"Select AI target (1-{max_option} or name): "
 
     while True:
-        choice = input("Select AI target (1-4 or name): ").strip().lower()
+        choice = input(prompt).strip().lower()
         for key, value, _ in _AI_TARGET_PROMPT:
             if choice == key or choice == value:
                 return value
-        print("Invalid selection. Choose 1-4 or: claude, copilot, cursor, neutral.")
+        print(f"Invalid selection. Choose 1-{max_option} or a target name.")
 
 
 def _query(repo_path: str, query_text: str, top_k: int) -> int:
