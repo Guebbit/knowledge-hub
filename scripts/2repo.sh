@@ -56,7 +56,7 @@ done
 
 if [[ -z "$REPO_PATH" ]]; then
     echo "ERROR: provide a path to the target repository (or '.' for current directory)" >&2
-    echo "Usage: 2repo <command> <repo> [options]" >&2
+    echo "Usage: 2repo [<command>] <repo> [options]   (command defaults to 'graph' when omitted)" >&2
     echo "Commands: graph (default), check, hook, reindex, query, remember, wiki" >&2
     echo "Example: 2repo wiki . --dry-run" >&2
     exit 1
