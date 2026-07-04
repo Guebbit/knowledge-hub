@@ -31,7 +31,19 @@ Type `2brain "what I just figured out"` and an AI writes a clean, structured not
 
 ### [`2repo`](docs/2repo.md) — repository intelligence for AI coding sessions
 
-Run `2repo ~/Work/my-repo` and it generates deterministic repo artifacts (`graphify-out/*`: graph report, execution knowledge, durable memory, semantic index, canonical context) plus one editor bridge file for Claude, Copilot, or Cursor. Your AI assistant starts every session already knowing the repo instead of burning context re-reading it. It also supports semantic queries (`2repo --query`) and durable repo memory (`2repo --remember`).
+Run `2repo ~/Work/my-repo` and it generates deterministic repo artifacts (`graphify-out/*`: graph report, execution knowledge, durable memory, semantic index, canonical context) plus one editor bridge file for Claude, Copilot, or Cursor. Your AI assistant starts every session already knowing the repo instead of burning context re-reading it.
+
+One subcommand per category, so no single command does too many different things:
+
+```bash
+2repo graph ~/Work/my-repo        # full pipeline (default: plain `2repo <repo>` does the same)
+2repo check .                     # is the graph stale?
+2repo hook .                      # install stale-warning post-commit hook
+2repo query . "how do I run tests?"
+2repo remember . "Use make test" --kind runbook
+2repo reindex .                   # rebuild index/context from existing artifacts
+2repo wiki .                      # living LLM wiki: per-file docs, updated incrementally
+```
 
 → Full pipeline, generated artifacts, commands, configuration: **[docs/2repo.md](docs/2repo.md)**
 
@@ -54,7 +66,8 @@ YOUR BRAIN (ADHD)
 │                              │    ├── EXECUTION.md
 │                              │    ├── REPO_MEMORY.md
 │                              │    ├── repo-index.json
-│                              │    └── REPO_CONTEXT.md  ← AI assistant starts here
+│                              │    ├── REPO_CONTEXT.md  ← AI assistant starts here
+│                              │    └── wiki/            ← living LLM wiki (2repo wiki)
 │                              │
 │                              └── selected AI bridge file
 │                                   (.claude/KNOWLEDGE.md, CLAUDE.md,
@@ -245,7 +258,7 @@ All config lives in `.env`. Never edit `docker-compose.yml` directly.
 | `OLLAMA_NUM_THREAD` | `1` | CPU threads for Ollama (keep low to leave headroom) |
 | `OLLAMA_MEM_LIMIT` | `16g` | RAM limit for the Ollama container |
 
-See [docs/2repo.md](docs/2repo.md#2repo-configuration-env) for `2repo`-specific variables (`REPO_PRESET_GRAPH`, `REPO_AI_TARGET`, `REPO_STALE_THRESHOLD`).
+See [docs/2repo.md](docs/2repo.md#2repo-configuration-env) for `2repo`-specific variables (`REPO_PRESET_GRAPH`, `REPO_PRESET_WIKI`, `REPO_AI_TARGET`, `REPO_STALE_THRESHOLD`, `REPO_WIKI_AUTO`).
 
 ---
 

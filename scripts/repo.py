@@ -2,15 +2,22 @@
 """
 2repo — repository intelligence pipeline for any codebase.
 
-Usage (via 2repo.sh alias):
-  2repo .                       # full run (extract + execution + index + selected AI injection)
-  2repo /path/to/repo           # full run for a specific repo
-  2repo . --update              # incremental graphify update + orchestration
-  2repo . --check               # staleness check vs last baseline
-  2repo . --install-hook        # install stale-warning post-commit hook
-  2repo . --query "how do I run tests?" --top-k 5
-  2repo . --remember "Use pytest -q for unit tests" --memory-kind runbook
-  2repo . --reindex             # rebuild semantic index + selected AI injection from existing artifacts
+Usage (via 2repo.sh alias) — one subcommand per category:
+  2repo .                                # full run (same as: 2repo graph .)
+  2repo graph .                          # graph pipeline (extract + execution + index + AI injection)
+  2repo graph . --update                 # incremental graphify update + orchestration
+  2repo check .                          # staleness check vs last baseline
+  2repo hook .                           # install stale-warning post-commit hook
+  2repo query . "how do I run tests?" --top-k 5
+  2repo remember . "Use pytest -q for unit tests" --kind runbook
+  2repo reindex .                        # rebuild semantic index + selected AI injection from existing artifacts
+  2repo wiki .                           # incremental LLM wiki (changed files + 2-hop graph neighbors)
+  2repo wiki . src/auth.ts src/db.ts     # target specific files (+ their graph neighbors)
+  2repo wiki . --force-all               # full wiki rebuild (ignore cache and baseline)
+  2repo wiki . --dry-run                 # list pages that would be regenerated (no LLM calls)
+  2repo wiki . --mirror-vault            # also copy wiki pages into the Obsidian vault (Projects/<repo>)
+
+Legacy flag syntax (2repo . --wiki, --check, --query, ...) still works but is deprecated.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ import config
 import repo_index
 import repo_injection
 import repo_memory
+import repo_wiki
 from repo_execution import generate as execution_generate
 from utils import die
 
@@ -64,6 +72,16 @@ _AI_TARGET_PROMPT = (
 
 def _resolve_preset(name: str | None) -> tuple[str, str]:
     preset_name = (name or os.getenv("REPO_PRESET_GRAPH", "")).lower()
+    if not preset_name:
+        return config.PROVIDER, config.MODEL
+    if preset_name not in config.PRESETS:
+        die(f"preset '{preset_name}' not defined — add PRESET_{preset_name.upper()}=provider:model to .env")
+    return config.PRESETS[preset_name]
+
+
+def _resolve_wiki_preset(name: str | None) -> tuple[str, str]:
+    """Resolve the wiki model preset: --preset > REPO_PRESET_WIKI > REPO_PRESET_GRAPH > default."""
+    preset_name = (name or os.getenv("REPO_PRESET_WIKI", "") or os.getenv("REPO_PRESET_GRAPH", "")).lower()
     if not preset_name:
         return config.PROVIDER, config.MODEL
     if preset_name not in config.PRESETS:
@@ -160,7 +178,7 @@ def _write_state(repo_path: str, *, pipeline: dict[str, object]) -> None:
 def _read_state(repo_path: str) -> dict[str, object] | None:
     state_file = _repo_state_file(repo_path)
     if not state_file.exists():
-        print("Stale    : state not found — run 2repo first")
+        print("Stale    : state not found — run '2repo graph <repo>' first")
         return None
     try:
         return json.loads(state_file.read_text())
@@ -237,12 +255,13 @@ def _check(repo_path: str) -> int:
 
 def _install_hook(repo_path: str) -> int:
     if not _in_git_repo(repo_path):
-        die("--install-hook requires a git repository")
+        die("'2repo hook' requires a git repository")
 
     hooks_dir = Path(repo_path) / ".git" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
     hook_path = hooks_dir / "post-commit"
     threshold = _resolve_threshold()
+    wiki_auto = "1" if (os.getenv("REPO_WIKI_AUTO") or "").strip() == "1" else "0"
     hook = f"""#!/usr/bin/env bash
 set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -263,13 +282,21 @@ threshold="{threshold}"
 
 if [[ "${{threshold}}" -gt 0 && "${{changed}}" -ge "${{threshold}}" ]]; then
   echo "2repo warning: graph may be stale (${{changed}} files changed since last generation, threshold=${{threshold}})." >&2
-  echo "Run: 2repo . --update   (or full run: 2repo .)" >&2
+  echo "Run: 2repo graph . --update   (or full run: 2repo graph .)" >&2
+  echo "Wiki: 2repo wiki .            (incremental wiki refresh for changed files)" >&2
+fi
+
+# Auto-refresh the wiki when: enabled at hook-install time, something changed, and the 2repo alias exists.
+if [[ "{wiki_auto}" == "1" && "${{changed}}" -gt 0 ]] && command -v 2repo >/dev/null 2>&1; then
+  echo "2repo: refreshing wiki incrementally (REPO_WIKI_AUTO=1)..." >&2
+  2repo wiki "${{repo_root}}" || echo "2repo: wiki refresh failed — run manually: 2repo wiki ." >&2
 fi
 """
     hook_path.write_text(hook)
     hook_path.chmod(0o755)
     print(f"Hook     : installed stale-warning hook in {hook_path}")
     print(f"Hook     : threshold={threshold} (set REPO_STALE_THRESHOLD to change)")
+    print(f"Hook     : wiki auto-refresh {'enabled' if wiki_auto == '1' else 'disabled'} (set REPO_WIKI_AUTO=1 before '2repo hook' to enable)")
     return 0
 
 
@@ -382,7 +409,7 @@ def _query(repo_path: str, query_text: str, top_k: int) -> int:
     try:
         results = repo_index.semantic_query(repo_path, text=query_text, top_k=top_k)
     except FileNotFoundError:
-        die("semantic index not found — run 2repo first (or 2repo <repo> --reindex)")
+        die("semantic index not found — run '2repo graph <repo>' first (or '2repo reindex <repo>')")
     except ValueError as exc:
         die(str(exc))
 
@@ -402,51 +429,245 @@ def _query(repo_path: str, query_text: str, top_k: int) -> int:
     return 0
 
 
+def _baseline_changed_files(repo_path: str) -> set[str] | None:
+    """Return files changed since the .2repo-state.json baseline, or None if unusable."""
+    if not _in_git_repo(repo_path):
+        return None
+    state = _read_state(repo_path)
+    if not state:
+        return None
+    base_commit = str(state.get("head", "")).strip()
+    if not base_commit:
+        return None
+    if _git_capture(repo_path, ["cat-file", "-e", f"{base_commit}^{{commit}}"]).returncode != 0:
+        return None
+    return _changed_files_since(repo_path, base_commit)
+
+
+def _normalize_target_files(repo_path: str, files: list[str]) -> set[str]:
+    """Resolve explicitly targeted wiki files to repo-relative paths, failing fast on bad input."""
+    repo = Path(repo_path).resolve()
+    normalized: set[str] = set()
+    for raw in files:
+        candidate = Path(raw)
+        resolved = (candidate if candidate.is_absolute() else repo / candidate).resolve()
+        try:
+            rel = resolved.relative_to(repo)
+        except ValueError:
+            die(f"targeted file is outside the repository: {raw}")
+        if not resolved.is_file():
+            die(f"targeted file not found: {raw}")
+        normalized.add(rel.as_posix())
+    return normalized
+
+
+def _wiki(
+    repo_path: str,
+    *,
+    provider: str,
+    model: str,
+    ai_target: str,
+    target_files: list[str] | None = None,
+    force_all: bool,
+    dry_run: bool,
+    mirror_vault: bool,
+) -> int:
+    """Generate/update the living wiki, then refresh index + context so pages are retrievable."""
+    if target_files:
+        changed = _normalize_target_files(repo_path, target_files)
+        print(f"Wiki     : targeting {len(changed)} explicit file(s) + graph neighbors")
+    else:
+        changed = None if force_all else _baseline_changed_files(repo_path)
+        if changed is None and not force_all:
+            print("Wiki     : no usable baseline — considering all graph files (hash cache still applies)")
+
+    # providers.call_llm reads config.PROVIDER/config.MODEL at call time.
+    config.PROVIDER = provider
+    config.MODEL = model
+
+    try:
+        summary = repo_wiki.generate(
+            repo_path,
+            changed_files=changed,
+            force_all=force_all,
+            dry_run=dry_run,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        die(str(exc))
+
+    if dry_run:
+        return 0
+
+    # Fold wiki pages into the semantic index and canonical context.
+    # State is intentionally NOT rewritten: the graph baseline must only move
+    # when graphify itself runs, otherwise --check would report a stale graph as fresh.
+    _build_layers(repo_path, provider=provider, model=model, mode="wiki", ai_target=ai_target)
+
+    if mirror_vault:
+        try:
+            destination = repo_wiki.mirror_to_vault(repo_path, config.VAULT_PATH)
+        except FileNotFoundError as exc:
+            die(str(exc))
+        print(f"Wiki     : mirrored to {destination}")
+
+    written = summary.get("written") or []
+    removed = summary.get("removed") or []
+    print(f"Wiki     : done ({len(written)} written, {len(removed)} pruned, {summary.get('page_count')} pages total)")
+    return 0
+
+
+_COMMANDS = ("graph", "check", "hook", "reindex", "query", "remember", "wiki")
+_LEGACY_MODE_FLAGS = {"--check": "check", "--install-hook": "hook", "--reindex": "reindex", "--wiki": "wiki"}
+_LEGACY_VALUE_FLAGS = {"--query": "query", "--remember": "remember"}
+_LEGACY_OPTION_RENAMES = {"--memory-kind": "--kind", "--memory-source": "--source"}
+
+
+def _translate_legacy_argv(argv: list[str]) -> list[str]:
+    """Map deprecated flag-style invocations (2repo . --wiki) onto subcommands (2repo wiki .)."""
+    for arg in argv:
+        if arg in ("-h", "--help"):
+            return argv  # top-level help
+        if arg.startswith("-"):
+            continue
+        if arg in _COMMANDS:
+            return argv  # already subcommand style
+        break  # first positional is the repo path → legacy style
+
+    command = "graph"
+    legacy_flag_used = False
+    positional_value: str | None = None
+    repo: str | None = None
+    options: list[str] = []
+
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        flag, _, inline_value = arg.partition("=")
+        if arg in _LEGACY_MODE_FLAGS:
+            command = _LEGACY_MODE_FLAGS[arg]
+            legacy_flag_used = True
+        elif flag in _LEGACY_VALUE_FLAGS:
+            command = _LEGACY_VALUE_FLAGS[flag]
+            legacy_flag_used = True
+            if inline_value:
+                positional_value = inline_value
+            else:
+                i += 1
+                if i >= len(argv):
+                    die(f"{flag} requires a value")
+                positional_value = argv[i]
+        elif flag in _LEGACY_OPTION_RENAMES:
+            options.append(_LEGACY_OPTION_RENAMES[flag] + (f"={inline_value}" if inline_value else ""))
+        elif repo is None and not arg.startswith("-"):
+            repo = arg
+        else:
+            options.append(arg)
+        i += 1
+
+    if legacy_flag_used:
+        print(
+            f"Note     : legacy flag syntax is deprecated — use '2repo {command} <repo>' instead",
+            file=sys.stderr,
+        )
+
+    translated = [command]
+    if repo is not None:
+        translated.append(repo)
+    if positional_value is not None:
+        translated.append(positional_value)
+    translated.extend(options)
+    return translated
+
+
+def _add_repo_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("repo", nargs="?", default="/target-repo", help="Path to the target repository (default: /target-repo)")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate and query repository intelligence artifacts with 2repo"
+        prog="2repo",
+        description="Generate and query repository intelligence artifacts with 2repo",
     )
-    parser.add_argument("repo", nargs="?", default="/target-repo", help="Path to the target repository (default: /target-repo)")
-    parser.add_argument("--update", action="store_true", help="Incremental graph update (re-extract changed files only)")
-    parser.add_argument("--check", action="store_true", help="Check if graph is stale based on changed files since last generation")
-    parser.add_argument("--install-hook", action="store_true", help="Install a post-commit hook that warns when graph may be stale")
-    parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. smart, local, big)")
-    parser.add_argument("--query", metavar="TEXT", help="Run semantic retrieval over repo artifacts + repo memory")
-    parser.add_argument("--top-k", type=int, default=5, metavar="N", help="Number of semantic query matches to return (default: 5)")
-    parser.add_argument("--remember", metavar="TEXT", help="Persist a durable repository memory entry")
-    parser.add_argument("--memory-kind", choices=["fact", "decision", "runbook"], default="fact", help="Memory type for --remember (default: fact)")
-    parser.add_argument("--memory-source", default="manual", metavar="SOURCE", help="Memory source label for --remember (default: manual)")
-    parser.add_argument("--reindex", action="store_true", help="Rebuild semantic index, context, and selected AI injection from existing artifacts")
-    parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
-    args = parser.parse_args()
+    subparsers = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+
+    graph_parser = subparsers.add_parser("graph", help="Build the full pipeline: graph + execution + memory + index + AI injection")
+    _add_repo_argument(graph_parser)
+    graph_parser.add_argument("--update", action="store_true", help="Incremental graph update (re-extract changed files only)")
+    graph_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. smart, local, big)")
+    graph_parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
+
+    check_parser = subparsers.add_parser("check", help="Check if the graph is stale based on changes since the last generation")
+    _add_repo_argument(check_parser)
+
+    hook_parser = subparsers.add_parser("hook", help="Install a post-commit hook that warns when the graph may be stale")
+    _add_repo_argument(hook_parser)
+
+    reindex_parser = subparsers.add_parser("reindex", help="Rebuild semantic index, context, and selected AI injection from existing artifacts")
+    _add_repo_argument(reindex_parser)
+    reindex_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. smart, local, big)")
+    reindex_parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
+
+    query_parser = subparsers.add_parser("query", help="Run semantic retrieval over repo artifacts + repo memory")
+    _add_repo_argument(query_parser)
+    query_parser.add_argument("text", metavar="TEXT", help="Question to run against the semantic index")
+    query_parser.add_argument("--top-k", type=int, default=5, metavar="N", help="Number of semantic query matches to return (default: 5)")
+
+    remember_parser = subparsers.add_parser("remember", help="Persist a durable repository memory entry")
+    _add_repo_argument(remember_parser)
+    remember_parser.add_argument("text", metavar="TEXT", help="Memory entry to persist")
+    remember_parser.add_argument("--kind", choices=["fact", "decision", "runbook"], default="fact", help="Memory type (default: fact)")
+    remember_parser.add_argument("--source", default="manual", metavar="SOURCE", help="Memory source label (default: manual)")
+    remember_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. smart, local, big)")
+    remember_parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
+
+    wiki_parser = subparsers.add_parser("wiki", help="Generate/update the living wiki (graphify-out/wiki/) incrementally via LLM")
+    _add_repo_argument(wiki_parser)
+    wiki_parser.add_argument("files", nargs="*", metavar="FILE", help="Optional explicit files to regenerate (plus their graph neighbors)")
+    wiki_parser.add_argument("--force-all", action="store_true", help="Full rebuild, ignoring cache and baseline")
+    wiki_parser.add_argument("--dry-run", action="store_true", help="List pages that would regenerate, without calling the LLM")
+    wiki_parser.add_argument("--mirror-vault", action="store_true", help="Copy wiki pages into the Obsidian vault (Projects/<repo-name>)")
+    wiki_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_WIKI (e.g. smart, local, big)")
+    wiki_parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
+
+    args = parser.parse_args(_translate_legacy_argv(sys.argv[1:]))
 
     if not Path(args.repo).is_dir():
         die(f"not a directory: {args.repo}")
 
-    mode_flags = {
-        "--check": args.check,
-        "--install-hook": args.install_hook,
-        "--query": bool(args.query),
-        "--remember": bool(args.remember),
-        "--reindex": args.reindex,
-    }
-    if sum(bool(flag) for flag in mode_flags.values()) > 1:
-        selected = ", ".join(name for name, enabled in mode_flags.items() if enabled)
-        die(f"cannot combine exclusive mode flags: {selected}")
-
-    if args.check:
+    if args.command == "check":
         sys.exit(_check(args.repo))
-    if args.install_hook:
+    if args.command == "hook":
         sys.exit(_install_hook(args.repo))
-    if args.query:
-        sys.exit(_query(args.repo, args.query, max(1, args.top_k)))
+    if args.command == "query":
+        sys.exit(_query(args.repo, args.text, max(1, args.top_k)))
+
+    if args.command == "wiki":
+        if args.files and args.force_all:
+            die("cannot combine explicit FILE targets with --force-all")
+        provider, model = _resolve_wiki_preset(args.preset)
+        ai_target = "neutral" if args.dry_run else _resolve_ai_target(args.ai_target)
+        print(f"Provider : {provider}  |  Model: {model}")
+        if not args.dry_run:
+            print(f"AI target: {ai_target}")
+        sys.exit(
+            _wiki(
+                args.repo,
+                provider=provider,
+                model=model,
+                ai_target=ai_target,
+                target_files=args.files,
+                force_all=args.force_all,
+                dry_run=args.dry_run,
+                mirror_vault=args.mirror_vault,
+            )
+        )
 
     provider, model = _resolve_preset(args.preset)
     ai_target = _resolve_ai_target(args.ai_target)
     print(f"Provider : {provider}  |  Model: {model}")
     print(f"AI target: {ai_target}")
 
-    if args.remember:
+    if args.command == "remember":
         _require_pipeline_artifacts(args.repo)
         try:
             existing_revision = str(repo_index.load_index(args.repo).get("revision") or "")
@@ -454,9 +675,9 @@ def main() -> None:
             existing_revision = ""
         entry = repo_memory.add_entry(
             args.repo,
-            text=args.remember,
-            kind=args.memory_kind,
-            source=args.memory_source,
+            text=args.text,
+            kind=args.kind,
+            source=args.source,
             head=_resolve_head(args.repo),
             index_revision=existing_revision,
         )
@@ -465,7 +686,7 @@ def main() -> None:
         _write_state(args.repo, pipeline=layers)
         return
 
-    if args.reindex:
+    if args.command == "reindex":
         _require_pipeline_artifacts(args.repo)
         layers = _build_layers(args.repo, provider=provider, model=model, mode="reindex", ai_target=ai_target)
         _write_state(args.repo, pipeline=layers)

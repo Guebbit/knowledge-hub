@@ -4,7 +4,7 @@ from __future__ import annotations
 Semantic index for 2repo artifacts.
 
 Builds a lightweight TF-IDF vector index from graphify-out artifacts and durable
-repo memory, then serves cosine-similarity retrieval for `2repo --query`.
+repo memory, then serves cosine-similarity retrieval for `2repo query`.
 """
 
 import hashlib
@@ -27,6 +27,7 @@ _SKIP_INDEX_PATHS = {
     "graphify-out/.2repo-state.json",
     "graphify-out/repo-index.json",
     "graphify-out/repo-memory.json",
+    "graphify-out/wiki/.wiki-cache.json",
 }
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]{2,}")
 _MAX_CHUNK_CHARS = 1200
