@@ -37,6 +37,8 @@ For detailed references consult:
 - `graphify-out/REPO_MEMORY.md`
 """
 
+_AI_TARGETS = ("claude", "copilot", "cursor", "neutral")
+
 
 def _replace_or_append(path: Path, *, block: str) -> None:
     if path.exists():
@@ -51,32 +53,35 @@ def _replace_or_append(path: Path, *, block: str) -> None:
     path.write_text(block + "\n", encoding="utf-8")
 
 
-def inject_all(repo_path: str) -> list[str]:
+def inject_for_target(repo_path: str, *, ai_target: str) -> list[str]:
     repo = Path(repo_path)
     context = repo / "graphify-out" / "REPO_CONTEXT.md"
     if not context.exists():
         raise FileNotFoundError(f"required context artifact missing: {context}")
+    if ai_target not in _AI_TARGETS:
+        raise ValueError(f"invalid ai target '{ai_target}' (expected one of: {', '.join(_AI_TARGETS)})")
 
     outputs: list[str] = []
 
-    claude_dir = repo / ".claude"
-    claude_dir.mkdir(parents=True, exist_ok=True)
-    knowledge = claude_dir / "KNOWLEDGE.md"
-    knowledge.write_text("@../graphify-out/REPO_CONTEXT.md\n", encoding="utf-8")
-    outputs.append(str(knowledge))
+    if ai_target == "claude":
+        claude_dir = repo / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        knowledge = claude_dir / "KNOWLEDGE.md"
+        knowledge.write_text("@../graphify-out/REPO_CONTEXT.md\n", encoding="utf-8")
+        outputs.append(str(knowledge))
 
-    claude_md = repo / "CLAUDE.md"
-    _replace_or_append(claude_md, block=_CLAUDE_INLINE)
-    outputs.append(str(claude_md))
-
-    copilot = repo / ".github" / "copilot-instructions.md"
-    _replace_or_append(copilot, block=_COPILOT_INLINE)
-    outputs.append(str(copilot))
-
-    cursor_rule = repo / ".cursor" / "rules" / "2repo.mdc"
-    cursor_rule.parent.mkdir(parents=True, exist_ok=True)
-    cursor_rule.write_text(_CURSOR_RULE, encoding="utf-8")
-    outputs.append(str(cursor_rule))
+        claude_md = repo / "CLAUDE.md"
+        _replace_or_append(claude_md, block=_CLAUDE_INLINE)
+        outputs.append(str(claude_md))
+    elif ai_target == "copilot":
+        copilot = repo / ".github" / "copilot-instructions.md"
+        _replace_or_append(copilot, block=_COPILOT_INLINE)
+        outputs.append(str(copilot))
+    elif ai_target == "cursor":
+        cursor_rule = repo / ".cursor" / "rules" / "2repo.mdc"
+        cursor_rule.parent.mkdir(parents=True, exist_ok=True)
+        cursor_rule.write_text(_CURSOR_RULE, encoding="utf-8")
+        outputs.append(str(cursor_rule))
 
     return outputs
 

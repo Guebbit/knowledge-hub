@@ -3,14 +3,14 @@
 2repo — repository intelligence pipeline for any codebase.
 
 Usage (via 2repo.sh alias):
-  2repo .                       # full run (extract + execution + index + injections)
+  2repo .                       # full run (extract + execution + index + selected AI injection)
   2repo /path/to/repo           # full run for a specific repo
   2repo . --update              # incremental graphify update + orchestration
   2repo . --check               # staleness check vs last baseline
   2repo . --install-hook        # install stale-warning post-commit hook
   2repo . --query "how do I run tests?" --top-k 5
   2repo . --remember "Use pytest -q for unit tests" --memory-kind runbook
-  2repo . --reindex             # rebuild semantic index + injections from existing artifacts
+  2repo . --reindex             # rebuild semantic index + selected AI injection from existing artifacts
 """
 
 from __future__ import annotations
@@ -53,6 +53,13 @@ _REQUIRED_PIPELINE_ARTIFACTS = (
     Path("graphify-out/EXECUTION.md"),
 )
 _QUERY_EXCERPT_LENGTH = 320
+_AI_TARGETS = ("claude", "copilot", "cursor", "neutral")
+_AI_TARGET_PROMPT = (
+    ("1", "claude", "Claude Code"),
+    ("2", "copilot", "GitHub Copilot"),
+    ("3", "cursor", "Cursor"),
+    ("4", "neutral", "Neutral (local/custom setup, no editor file generation)"),
+)
 
 
 def _resolve_preset(name: str | None) -> tuple[str, str]:
@@ -274,7 +281,7 @@ def _require_pipeline_artifacts(repo_path: str) -> None:
             die(f"required artifact missing: {path}")
 
 
-def _build_layers(repo_path: str, *, provider: str, model: str, mode: str) -> dict[str, object]:
+def _build_layers(repo_path: str, *, provider: str, model: str, mode: str, ai_target: str) -> dict[str, object]:
     _require_pipeline_artifacts(repo_path)
 
     head = _resolve_head(repo_path)
@@ -301,13 +308,15 @@ def _build_layers(repo_path: str, *, provider: str, model: str, mode: str) -> di
         index_chunks=int(index_meta["chunk_count"]),
         memory_count=int(index_meta["memory_count"]),
     )
-    injected_paths = repo_injection.inject_all(repo_path)
+    injected_paths = repo_injection.inject_for_target(repo_path, ai_target=ai_target)
 
     print(f"Memory   : {memory_report}")
     print(f"Index    : {index_meta['index_path']}  (chunks={index_meta['chunk_count']})")
     print(f"Context  : {context_path}")
     for injected in injected_paths:
         print(f"Inject   : {injected}")
+    if not injected_paths:
+        print("Inject   : skipped (neutral target selected)")
 
     return {
         "execution": {
@@ -330,11 +339,34 @@ def _build_layers(repo_path: str, *, provider: str, model: str, mode: str) -> di
         "context": {
             "artifact": "graphify-out/REPO_CONTEXT.md",
             "injected": injected_paths,
+            "ai_target": ai_target,
             "provider": provider,
             "model": model,
             "mode": mode,
         },
     }
+
+
+def _resolve_ai_target(cli_target: str | None = None) -> str:
+    if cli_target:
+        if cli_target not in _AI_TARGETS:
+            die(f"invalid --ai-target '{cli_target}' (expected one of: {', '.join(_AI_TARGETS)})")
+        return cli_target
+
+    if not sys.stdin.isatty():
+        print("AI target: non-interactive session detected, defaulting to neutral")
+        return "neutral"
+
+    print("AI target: select which integration files to generate")
+    for key, value, label in _AI_TARGET_PROMPT:
+        print(f"  {key}) {label} ({value})")
+
+    while True:
+        choice = input("Select AI target [1-4]: ").strip().lower()
+        for key, value, _ in _AI_TARGET_PROMPT:
+            if choice == key or choice == value:
+                return value
+        print("Invalid selection. Choose 1-4 or: claude, copilot, cursor, neutral.")
 
 
 def _query(repo_path: str, query_text: str, top_k: int) -> int:
@@ -375,7 +407,8 @@ def main() -> None:
     parser.add_argument("--remember", metavar="TEXT", help="Persist a durable repository memory entry")
     parser.add_argument("--memory-kind", choices=["fact", "decision", "runbook"], default="fact", help="Memory type for --remember (default: fact)")
     parser.add_argument("--memory-source", default="manual", metavar="SOURCE", help="Memory source label for --remember (default: manual)")
-    parser.add_argument("--reindex", action="store_true", help="Rebuild semantic index, context, and editor injections from existing artifacts")
+    parser.add_argument("--reindex", action="store_true", help="Rebuild semantic index, context, and selected AI injection from existing artifacts")
+    parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
     args = parser.parse_args()
 
     if not Path(args.repo).is_dir():
@@ -400,7 +433,9 @@ def main() -> None:
         sys.exit(_query(args.repo, args.query, max(1, args.top_k)))
 
     provider, model = _resolve_preset(args.preset)
+    ai_target = _resolve_ai_target(args.ai_target)
     print(f"Provider : {provider}  |  Model: {model}")
+    print(f"AI target: {ai_target}")
 
     if args.remember:
         _require_pipeline_artifacts(args.repo)
@@ -417,19 +452,25 @@ def main() -> None:
             index_revision=existing_revision,
         )
         print(f"Memory   : stored [{entry['kind']}] {entry['text']}")
-        layers = _build_layers(args.repo, provider=provider, model=model, mode="memory-update")
+        layers = _build_layers(args.repo, provider=provider, model=model, mode="memory-update", ai_target=ai_target)
         _write_state(args.repo, pipeline=layers)
         return
 
     if args.reindex:
         _require_pipeline_artifacts(args.repo)
-        layers = _build_layers(args.repo, provider=provider, model=model, mode="reindex")
+        layers = _build_layers(args.repo, provider=provider, model=model, mode="reindex", ai_target=ai_target)
         _write_state(args.repo, pipeline=layers)
         return
 
     _run_graphify(args.repo, provider, model, update=args.update)
     execution_generate(args.repo)
-    layers = _build_layers(args.repo, provider=provider, model=model, mode="update" if args.update else "extract")
+    layers = _build_layers(
+        args.repo,
+        provider=provider,
+        model=model,
+        mode="update" if args.update else "extract",
+        ai_target=ai_target,
+    )
     _write_state(args.repo, pipeline=layers)
 
 
