@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""
+Semantic index for 2repo artifacts.
+
+Builds a lightweight TF-IDF vector index from graphify-out artifacts and durable
+repo memory, then serves cosine-similarity retrieval for `2repo --query`.
+"""
+
 import hashlib
 import json
 import math
@@ -31,14 +38,17 @@ _EXPANSION_SEED_TERMS_PER_CHUNK = 25
 
 
 def _now_iso() -> str:
+    """Return current UTC timestamp in ISO-8601 format."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def _index_file(repo: Path) -> Path:
+    """Return index file path for a repository."""
     return repo / _INDEX_SUBPATH
 
 
 def _tokenize(text: str) -> list[str]:
+    """Tokenize text into lowercase terms with a light plural-normalization step."""
     tokens: list[str] = []
     for token in _TOKEN_PATTERN.findall(text.lower()):
         tokens.append(token)
@@ -49,14 +59,17 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _hash_text(text: str) -> str:
+    """Return SHA-256 hex digest for text."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _load_text(path: Path) -> str:
+    """Read UTF-8 text with replacement for invalid bytes."""
     return path.read_text(encoding="utf-8", errors="replace")
 
 
 def _chunk_plain_text(text: str) -> list[str]:
+    """Split text into paragraph-like chunks bounded by max character size."""
     chunks: list[str] = []
     block: list[str] = []
     current_len = 0
@@ -90,6 +103,7 @@ def _chunk_plain_text(text: str) -> list[str]:
 
 
 def _artifact_files(repo: Path) -> list[Path]:
+    """Return indexable graphify-out artifact files, skipping generated index/state."""
     graphify_out = repo / "graphify-out"
     if not graphify_out.exists():
         return []
@@ -113,6 +127,7 @@ def _build_chunk_records(
     artifact_files: list[Path],
     runtime_metadata: dict[str, str],
 ) -> list[dict[str, str]]:
+    """Create indexable chunk records from runtime metadata, artifacts, and memory."""
     chunks: list[dict[str, str]] = []
 
     runtime_lines = [f"{k}: {v}" for k, v in sorted(runtime_metadata.items()) if v]
@@ -154,6 +169,7 @@ def _build_chunk_records(
 
 
 def _compute_idf(chunk_token_sets: list[set[str]]) -> dict[str, float]:
+    """Compute smoothed inverse document frequency weights for all seen tokens."""
     docs = len(chunk_token_sets)
     df: Counter[str] = Counter()
     for tokens in chunk_token_sets:
@@ -164,6 +180,7 @@ def _compute_idf(chunk_token_sets: list[set[str]]) -> dict[str, float]:
 
 
 def _vectorize(tokens: list[str], idf: dict[str, float]) -> tuple[dict[str, float], float]:
+    """Build a normalized TF-IDF-like sparse vector and its L2 norm."""
     tf = Counter(tokens)
     if not tf:
         return {}, 0.0
@@ -178,18 +195,21 @@ def _vectorize(tokens: list[str], idf: dict[str, float]) -> tuple[dict[str, floa
 
 
 def _dot(a: dict[str, float], b: dict[str, float]) -> float:
+    """Compute sparse dot product between two vectors."""
     if len(a) > len(b):
         a, b = b, a
     return sum(weight * b.get(token, 0.0) for token, weight in a.items())
 
 
 def _cosine(q_vector: dict[str, float], q_norm: float, d_vector: dict[str, float], d_norm: float) -> float:
+    """Return cosine similarity between two normalized sparse vectors."""
     if q_norm == 0.0 or d_norm == 0.0:
         return 0.0
     return _dot(q_vector, d_vector) / (q_norm * d_norm)
 
 
 def _artifact_digest(repo: Path, files: list[Path]) -> str:
+    """Hash artifact paths and bytes to detect content changes."""
     hasher = hashlib.sha256()
     for path in files:
         rel = str(path.relative_to(repo))
@@ -201,10 +221,12 @@ def _artifact_digest(repo: Path, files: list[Path]) -> str:
 
 
 def _memory_count(repo_path: str) -> int:
+    """Return number of durable repository memory entries."""
     return len(repo_memory.load_entries(repo_path))
 
 
 def build_index(repo_path: str, *, runtime_metadata: dict[str, str]) -> dict[str, str | int]:
+    """Build and persist repo-index.json, returning summary metadata."""
     repo = Path(repo_path)
     for rel in _REQUIRED_ARTIFACTS:
         if not (repo / rel).exists():
@@ -276,6 +298,7 @@ def build_index(repo_path: str, *, runtime_metadata: dict[str, str]) -> dict[str
 
 
 def load_index(repo_path: str) -> dict[str, object]:
+    """Load and validate the on-disk semantic index payload."""
     path = _index_file(Path(repo_path))
     if not path.exists():
         raise FileNotFoundError(f"index not found: {path}")
@@ -289,6 +312,7 @@ def load_index(repo_path: str) -> dict[str, object]:
 
 
 def semantic_query(repo_path: str, *, text: str, top_k: int = 5) -> list[dict[str, object]]:
+    """Run semantic retrieval against the index and return top ranked chunks."""
     query_text = text.strip()
     if not query_text:
         raise ValueError("query text cannot be empty or contain only whitespace")

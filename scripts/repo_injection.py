@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""
+Inject 2repo context into editor-specific instruction files.
+
+This module writes/updates small "bridge" files (Claude, Copilot, Cursor) that
+point to graphify-out/REPO_CONTEXT.md so assistants can ground responses in the
+latest generated repository artifacts.
+"""
+
 import re
 from pathlib import Path
 
@@ -41,6 +49,7 @@ _AI_TARGETS = ("claude", "copilot", "cursor", "neutral")
 
 
 def _replace_or_append(path: Path, *, block: str) -> None:
+    """Replace the managed marker block in a file, or append/create it if missing."""
     if path.exists():
         content = path.read_text(encoding="utf-8")
         if _MARKER_START in content:
@@ -54,6 +63,7 @@ def _replace_or_append(path: Path, *, block: str) -> None:
 
 
 def inject_for_target(repo_path: str, *, ai_target: str) -> list[str]:
+    """Write integration files for one AI target and return created/updated paths."""
     repo = Path(repo_path)
     context = repo / "graphify-out" / "REPO_CONTEXT.md"
     if not context.exists():
@@ -95,6 +105,7 @@ def write_repo_context(
     index_chunks: int,
     memory_count: int,
 ) -> Path:
+    """Build graphify-out/REPO_CONTEXT.md summarizing canonical 2repo artifacts."""
     repo = Path(repo_path)
     out = repo / "graphify-out" / "REPO_CONTEXT.md"
     out.parent.mkdir(parents=True, exist_ok=True)

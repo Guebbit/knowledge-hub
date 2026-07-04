@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""
+Durable repository memory storage for 2repo.
+
+Entries are stored in graphify-out/repo-memory.json and mirrored into
+graphify-out/REPO_MEMORY.md for human-readable inspection.
+"""
+
 import hashlib
 import json
 import re
@@ -11,18 +18,22 @@ _MEMORY_REPORT_SUBPATH = Path("graphify-out/REPO_MEMORY.md")
 
 
 def _now_iso() -> str:
+    """Return current UTC timestamp in ISO-8601 format."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def _memory_file(repo: Path) -> Path:
+    """Return path to the JSON memory store for a repository."""
     return repo / _MEMORY_SUBPATH
 
 
 def _memory_report_file(repo: Path) -> Path:
+    """Return path to the markdown memory report for a repository."""
     return repo / _MEMORY_REPORT_SUBPATH
 
 
 def _normalize_text(text: str) -> str:
+    """Collapse whitespace and reject empty memory text."""
     normalized = re.sub(r"\s+", " ", text).strip()
     if not normalized:
         raise ValueError("repository memory entry text cannot be empty or contain only whitespace")
@@ -30,6 +41,7 @@ def _normalize_text(text: str) -> str:
 
 
 def load_entries(repo_path: str) -> list[dict[str, str]]:
+    """Load and validate memory entries from disk, returning normalized records."""
     repo = Path(repo_path)
     path = _memory_file(repo)
     if not path.exists():
@@ -68,6 +80,7 @@ def load_entries(repo_path: str) -> list[dict[str, str]]:
 
 
 def _write_entries(repo: Path, entries: list[dict[str, str]]) -> None:
+    """Persist memory entries to graphify-out/repo-memory.json."""
     path = _memory_file(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -87,6 +100,7 @@ def add_entry(
     head: str,
     index_revision: str,
 ) -> dict[str, str]:
+    """Insert/update one memory entry, deduplicating by (kind, case-insensitive text)."""
     repo = Path(repo_path)
     normalized_text = _normalize_text(text)
     normalized_kind = kind.strip().lower()
@@ -121,6 +135,7 @@ def add_entry(
 
 
 def sync_entries(repo_path: str, *, head: str, index_revision: str) -> int:
+    """Update entry metadata to the latest git/index pointers; return updated count."""
     repo = Path(repo_path)
     entries = load_entries(repo_path)
     updated = 0
@@ -135,6 +150,7 @@ def sync_entries(repo_path: str, *, head: str, index_revision: str) -> int:
 
 
 def write_memory_report(repo_path: str) -> Path:
+    """Render a markdown report of all durable repository memory entries."""
     repo = Path(repo_path)
     report_path = _memory_report_file(repo)
     entries = load_entries(repo_path)
@@ -160,6 +176,7 @@ def write_memory_report(repo_path: str) -> Path:
 
 
 def memory_digest(repo_path: str) -> str:
+    """Compute a stable digest of current memory entries for index revisioning."""
     entries = load_entries(repo_path)
     payload = "\n".join(f"{e['id']}|{e['kind']}|{e['text']}" for e in entries)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
