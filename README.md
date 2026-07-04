@@ -574,7 +574,7 @@ If the combined content is dense enough to split into focused subtopics, add `--
 One command reads a repo, calls graphify, and writes repo-local graph artifacts. Optionally, it can also export a wiki to Obsidian.
 
 ```
-2repo ~/Work/my-repo  →  graphify-out/GRAPH_REPORT.md (+ wiki with --wiki)
+2repo ~/Work/my-repo  →  graphify-out/GRAPH_REPORT.md + graphify-out/EXECUTION.md (+ wiki with --wiki)
 ```
 
 ### Basic usage
@@ -611,10 +611,11 @@ my-repo/
 ├── graphify-out/
 │   ├── GRAPH_REPORT.md       ← graph summary for AI + humans
 │   ├── graph.json            ← full graph data
+│   ├── EXECUTION.md          ← extracted build/test/CI/migration knowledge
 │   └── .2repo-state.json     ← stale-check baseline metadata
-├── CLAUDE.md                 ← @graphify-out/GRAPH_REPORT.md block injected
+├── CLAUDE.md                 ← @graphify-out/GRAPH_REPORT.md + @graphify-out/EXECUTION.md block injected
 └── .claude/
-    └── KNOWLEDGE.md          ← @../graphify-out/GRAPH_REPORT.md (auto-load)
+    └── KNOWLEDGE.md          ← @../graphify-out/GRAPH_REPORT.md + @../graphify-out/EXECUTION.md (auto-load)
 ```
 
 When `--wiki` is enabled:
