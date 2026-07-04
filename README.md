@@ -12,7 +12,7 @@ No cloud. No subscriptions. Runs locally.
 
 ## The idea
 
-This system has three pieces. Each one solves a specific memory problem.
+This system has two commands. Each one solves a specific memory problem.
 
 ### The problem: ADHD + code + knowledge = context loss
 
@@ -23,65 +23,19 @@ Working memory is limited. With ADHD it's even more limited. Two things keep hap
 
 This system externalizes both problems.
 
----
+### [`2brain`](docs/2brain.md) — second brain
 
-### Piece 1 — Second brain (Obsidian + `2brain`)
+Type `2brain "what I just figured out"` and an AI writes a clean, structured note straight into your Obsidian vault. Zero friction, always the same format, searchable forever via Obsidian's graph view.
 
-**What it is:** a personal knowledge base that grows automatically as you learn things.
+→ Full usage, flags (`--link`, `--relink`, `--rework`, `--merge`, `--explore`, chain mode, etc.): **[docs/2brain.md](docs/2brain.md)**
 
-**How it works:** you type `2brain "what I just figured out"` → AI writes a clean, structured note → it appears in Obsidian instantly.
+### [`2repo`](docs/2repo.md) — repository intelligence for AI coding sessions
 
-**Why it matters for ADHD:**
-- Zero friction: one command, no decisions about format or where to save it
-- Always the same structure: every note looks identical, so your brain doesn't have to re-learn how to read them
-- Searchable forever: Obsidian's graph connects notes by topic — ideas you linked years ago resurface when relevant
-- Offloads working memory: once it's written, you don't need to hold it in your head anymore
+Run `2repo ~/Work/my-repo` and it generates deterministic repo artifacts (`graphify-out/*`: graph report, execution knowledge, durable memory, semantic index, canonical context) plus one editor bridge file for Claude, Copilot, or Cursor. Your AI assistant starts every session already knowing the repo instead of burning context re-reading it. It also supports semantic queries (`2repo --query`) and durable repo memory (`2repo --remember`).
 
-> Think of Obsidian as your external hard drive for knowledge. `2brain` is the "save" button.
+→ Full pipeline, generated artifacts, commands, configuration: **[docs/2repo.md](docs/2repo.md)**
 
----
-
-### Piece 2 — repository context (`2repo` → `graphify-out/*`)
-
-**What it is:** deterministic repository artifacts generated inside the repo (`graphify-out/*`) plus one optional editor bridge file for your selected AI target.
-
-**How it works:** `2repo ~/Work/my-repo` reads the repo, calls graphify, and builds canonical artifacts (`GRAPH_REPORT.md`, `EXECUTION.md`, `REPO_MEMORY.md`, `repo-index.json`, `REPO_CONTEXT.md`). Then it writes only the selected AI bridge file (Claude/Copilot/Cursor) that points to `REPO_CONTEXT.md`.
-
-**Why it matters:**
-
-When you open a project in Claude Code (or any AI assistant), the AI starts cold — it knows nothing about your codebase. It has to read dozens of files to understand the structure, burning through its context window before you've asked a single question.
-
-With `graphify-out/REPO_CONTEXT.md`, the AI starts every session already knowing:
-- What the repo does (purpose)
-- Which files do what (key files table)
-- How modules depend on each other (Mermaid diagram)
-- What conventions to follow and what to avoid
-- How to build/test/run it
-
-One canonical source. Zero duplicated AI-specific summaries. The AI is useful from the first message.
-
-**For humans too:** open `graphify-out/GRAPH_REPORT.md` and understand any repo in 30 seconds — no need to read 50 files.
-
----
-
-### Piece 3 — operational recall (`2repo --query` + memory)
-
-**What it is:** semantic recall on top of generated artifacts, with durable repository memory entries.
-
-**How it works:** `2repo --query "question"` retrieves ranked snippets from `graphify-out/*`; `2repo --remember` stores durable facts/decisions/runbooks for future retrieval.
-
-**Why it matters for ADHD:**
-
-Coming back to a project after weeks away means re-reading everything. With ADHD, that re-reading costs real time and attention — and the context still doesn't fully load.
-
-With retrieval + durable memory:
-- Ask a repo question and get immediate, grounded snippets
-- Store key decisions so they survive context resets
-- Rehydrate project context after breaks without re-reading everything
-
----
-
-### How all three fit together
+### How the two fit together
 
 ```
 YOUR BRAIN (ADHD)
@@ -140,79 +94,6 @@ Your machine (Manjaro)
 
 ---
 
-## How it works
-
-| Who | Does what |
-|---|---|
-| **You** | Type one command |
-| **`2brain`** (host shell script) | Parses args, spins up the scripts container |
-| **scripts container** (ephemeral) | Reads `.env` vars, calls Ollama or paid API, writes the note |
-| **Ollama** (container) | Runs the AI model on your GPU |
-| **Obsidian** (host app) | Watches the vault folder, shows the note instantly |
-
-```
-2brain "how to fix GPU OOM in Ollama" -f Troubleshooting
-    │
-    ├── reads .env  (model, provider, etc.)
-    │
-    ├── HTTP POST → http://localhost:11434  →  Ollama container
-    │                                              │
-    │                                         AI generates content
-    │                                              │
-    ◄──────────────────────────────────────────────┘
-    │
-    └── writes vault/Troubleshooting/how-to-fix-gpu-oom-in-ollama.md
-                │
-                └── Obsidian picks it up instantly
-```
-
-Every note always looks like this — same structure, every time, no exceptions:
-
-```markdown
----
-title: "how to fix GPU OOM in Ollama"
-tags:
-  - ollama
-  - gpu
-  - troubleshooting
-created: 2026-06-21
-folder: Troubleshooting
----
-
-## Summary
-Short explanation in plain language.
-
-## Key Points
-- bullet
-- bullet
-
-## Steps
-1. step one
-2. step two
-```
-
----
-
-## Obsidian
-
-Obsidian is a desktop app that runs on your host. It has no idea Docker exists.
-
-- Open Obsidian → **Open folder as vault** → point it at `vault/`
-- Every note `2brain` creates appears there instantly (Obsidian watches the folder)
-- **Search by title:** `Ctrl+O`
-- **Full-text search:** `Ctrl+Shift+F`
-- **Graph view:** `Ctrl+G` — shows connections between notes via `[[wikilinks]]`
-
-The graph starts sparse. As notes accumulate and link to each other, it fills up.
-
-Notes include visual elements when useful:
-
-- **Mermaid diagrams** — flowcharts, timelines, sequence diagrams, mindmaps (rendered natively by Obsidian)
-- **Callouts** — `> [!TIP]`, `> [!WARNING]`, `> [!NOTE]`, `> [!IMPORTANT]` highlight key info at a glance
-- **Excalidraw placeholders** — appear when a concept benefits from a hand-drawn diagram (requires the Excalidraw Obsidian plugin)
-
----
-
 ## Prerequisites
 
 - Docker or Podman
@@ -261,7 +142,7 @@ LINUX_USERNAME=yourname   # your Linux username, for ~/.ollama mount
 
 The default preset (`PRESET_LOCAL=ollama:qwen3:8b`) works out of the box once you pull the model in step 5. Add or change presets in the `PRESETS` section if needed.
 
-### 2. Register `2brain` as a global command
+### 2. Register `2brain` and `2repo` as global commands
 
 Add this to your `nano ~/.zshrc` or `nano ~/.bashrc` (use `echo $SHELL` to know which one), and add this line in the end:
 
@@ -271,14 +152,13 @@ alias 2brain="$KNOWLEDGE_HUB/scripts/2brain.sh"
 alias 2repo="$KNOWLEDGE_HUB/scripts/2repo.sh"
 ```
 
-
 Then reload:
 
 ```bash
 source ~/.zshrc
 ```
 
-Now `2brain` works from any directory on this machine.
+Now `2brain` and `2repo` work from any directory on this machine.
 
 ### 3. Build the container images
 
@@ -313,417 +193,13 @@ docker compose exec ollama ollama list   # verify
 
 Obsidian → **Open folder as vault** → select `vault/` inside this repo.
 
-Done. From now on: type `2brain`, note appears in Obsidian.
-
----
-
-## Daily usage
-
-### Generate a note from a topic
-
-```bash
-2brain "topic"
-```
-
-```bash
-2brain "what is VRAM and why does it matter for LLMs"
-2brain "docker compose cheat sheet"
-2brain "how to use git stash"
-```
-
-Lands in `vault/Inbox/` by default.
-
-### Route to the right folder with `-f`
-
-```bash
-2brain "topic" -f Folder
-```
-
-| Folder | What goes there |
-|---|---|
-| `Inbox` | Default. Capture first, sort later |
-| `Guides` | Step-by-step, how-tos |
-| `Troubleshooting` | Problem → cause → fix |
-| `Projects` | Project-specific notes |
-| `Reference` | Stable facts, tables, cheat sheets |
-
-```bash
-2brain "how to debug CUDA OOM errors" -f Troubleshooting
-2brain "ollama model selection guide" -f Reference
-2brain "how to set up a Python venv" -f Guides
-2brain "knowledge-hub architecture decisions" -f Projects
-```
-
-### Custom title
-
-```bash
-2brain "explain quantization in simple terms" --title "Quantization explained"
-```
-
-### Digest an existing file with `--from-file`
-
-Feed any file to the AI — it restructures the content into a proper note.
-
-```bash
-# markdown or text
-2brain --from-file ./my-notes.md -f Guides
-2brain --from-file ./my-notes.md -f Reference --title "Ollama reference"
-
-# PDF (requires: pip install pypdf)
-2brain --from-file ./paper.pdf -f Reference
-
-# audio/video — AI transcribes then writes the note (requires: pip install faster-whisper)
-2brain --from-file ./meeting-recording.mp3 -f Projects
-2brain --from-file ./tutorial.mp4 -f Guides --title "Docker networking tutorial"
-2brain --from-file ./voice-memo.m4a -f Inbox
-```
-
-Supported audio/video: `.mp3` `.mp4` `.wav` `.m4a` `.webm` `.ogg` `.flac`
-
-Paths can be relative to wherever you are — `./filename`, `../other/file.md`, absolute paths all work.
-
-### Add extra instructions with `--prompt`
-
-Guide the AI when digesting a file — focus on specific aspects, exclude sections, change the output style.
-
-```bash
-2brain --from-file ./raw-notes.md --prompt "focus on setup steps only, skip theory" -f Guides
-2brain --from-file ./meeting.mp3 --prompt "extract action items only" -f Projects
-2brain --from-file ./paper.pdf --prompt "explain for a non-expert audience" -f Reference
-```
-
-### Explore mode — split into multiple notes
-
-Instead of one note, the AI plans a set of focused subtopics and generates a note for each. Useful for broad topics or dense files.
-
-```bash
-# AI decides how many notes (usually 3-6)
-2brain "Docker networking" --explore -f Guides
-2brain --from-file ./raw-notes.md --explore -f Guides
-
-# Force exactly N notes
-2brain "Docker networking" --split 4 -f Guides
-2brain --from-file ./raw-notes.md --split 3 -f Reference
-
-# Generate each note independently (no shared context between notes)
-2brain "Docker networking" --explore --no-context -f Guides
-
-# Combine with --prompt
-2brain --from-file notes.md --explore --prompt "focus on practical usage, skip history" -f Guides
-```
-
-Each note lands in the same target folder. The subtopic plan is printed before generation starts so you can see what's coming.
-
-### Chain mode — one note per topic
-
-Pass multiple topics in one command — each gets its own AI call and its own note.
-
-```bash
-2brain "Docker networking" "Kubernetes pods" "Helm charts" -f Guides
-2brain "JWT" "OAuth2" "PKCE" -f Reference
-2brain "git rebase" "git stash" "git bisect"
-```
-
-Progress is printed as each note completes:
-
-```
-Chain    : 3 topics
-[1/3] 'Docker networking' ...
-Created  : vault/Guides/docker-networking.md
-[2/3] 'Kubernetes pods' ...
-Created  : vault/Guides/kubernetes-pods.md
-[3/3] 'Helm charts' ...
-Created  : vault/Guides/helm-charts.md
-```
-
-Combine with `--explore` to also split each topic into subtopic notes:
-
-```bash
-2brain "Networking" "Storage" "Security" --explore -f Guides
-```
-
----
-
-### Link notes together with `--link`, `--relink`, `--relink-all`
-
-Obsidian has a **graph view** (`Ctrl+G`) that draws a map of your notes as dots connected by lines. For two notes to be connected, one note must contain a `[[wikilink]]` that references the other note by title. Without links, the graph is a bunch of isolated dots and Obsidian's search and navigation features are much weaker.
-
-**The problem:** when the AI generates a note, it doesn't know what other notes you have. So by default, it can't add links to them.
-
-**The solution:** the three link flags solve this in different ways.
-
----
-
-#### `--link` — add links while generating a new note
-
-Before calling the AI, the script scans your entire vault and collects all note titles. It passes that list to the AI in the same prompt, so the AI can write `[[Ollama]]` or `[[model-quantization]]` inline where the content actually relates to those notes.
-
-```bash
-2brain "quantization formats for local LLMs" -f Reference --link
-2brain --from-file ./my-notes.md -f Guides --link
-2brain "Docker networking" --explore -f Guides --link
-```
-
-This is the flag to use every time you create a new note and want it to connect to your existing vault. The AI will only add a link when it genuinely makes sense — it won't force connections.
-
-> **Note:** links are only as good as your vault. Early on when you have few notes, `--link` won't add much. As your vault grows, it becomes increasingly valuable.
-
----
-
-#### `--relink FILE` — add links to one existing note
-
-Takes a note that already exists in the vault and asks the AI to add `[[wikilinks]]` to it — without changing anything else. The note content, structure, and frontmatter are preserved exactly; only links are injected.
-
-```bash
-2brain --relink vault/Reference/Ollama.md
-2brain --relink vault/Guides/graphify.md
-```
-
-Use this to retrofit old notes that were created before `--link` existed, or any time you want to link a specific note.
-
-> The original file is overwritten. Use `git diff` to review what was added.
-
----
-
-#### `--relink-all` — add links to every note in the vault
-
-Runs `--relink` logic on every `.md` file in the vault, one by one. Use `-f` to limit it to a single folder.
-
-```bash
-2brain --relink-all                  # entire vault
-2brain --relink-all -f Reference     # only the Reference folder
-2brain --relink-all -f Guides
-```
-
-Each note is processed in a separate AI call, so this takes a while on a large vault. Run it once after you have a good collection of notes and connections start to emerge.
-
-> All files are overwritten in place. Commit before running if you want a checkpoint.
-
----
-
-### Rework an existing note with `--rework`
-
-Rewrites a note already in the vault — same file, same path, overwritten in place. Title and folder are read from the note's frontmatter automatically.
-
-```bash
-2brain --rework vault/Guides/graphify.md
-2brain --rework vault/Inbox/ollama.md --prompt "add a section on GPU memory management"
-2brain --rework vault/Guides/vram-with-models-in-the-ollama-list.md --title "VRAM Guide"
-```
-
-> The original file is overwritten. Use `git diff` to review what changed.
-
----
-
-### Merge existing notes with `--merge`
-
-Combines two or more files into one clean, deduplicated note. Useful when you captured the same topic multiple times and ended up with duplicate or overlapping notes.
-
-```bash
-2brain --merge vault/Inbox/lora.md vault/Reference/lora.md -f Reference
-2brain --merge vault/Inbox/lora.md vault/Reference/lora.md -f Reference --title "Low-rank Adaptation"
-```
-
-Folder and title default to the frontmatter of the first file if not specified. The AI deduplicates, reorganizes, and produces one clean output.
-
-**Merge and immediately split into multiple notes:**
-
-If the combined content is dense enough to split into focused subtopics, add `--explore` or `--split`:
-
-```bash
-2brain --merge notes1.md notes2.md notes3.md --explore -f Reference
-2brain --merge notes1.md notes2.md --split 3 -f Guides
-```
-
-**Single file:** passing one path is equivalent to `--from-file` — it just digests and produces one note.
-
-> The source files are not deleted automatically. Remove them manually once you are happy with the merged result.
-
----
-
-## Practical examples
-
-**You just spent 2 hours debugging something:**
-```bash
-2brain "podman GPU passthrough failing with CUDA error 35" -f Troubleshooting
-```
-
-**You watched a tutorial and want to keep the key points:**
-```bash
-2brain --from-file ./tutorial-notes.mp4 -f Guides
-```
-
-**You read something useful:**
-```bash
-2brain "RAG vs fine-tuning — when to use which" -f Reference
-```
-
-**You set up a new tool:**
-```bash
-2brain "how to set up Ollama with Docker Compose on Manjaro" -f Guides
-```
-
-**Quick references you'll look up constantly:**
-```bash
-2brain "git commands I always forget" -f Reference
-2brain "docker compose cheat sheet" -f Reference
-```
-
-## 2repo — repository intelligence for AI coding sessions
-
-`2repo` is a sibling command to `2brain`, focused on understanding repositories and injecting deterministic context for one selected AI target (Claude, Copilot, Cursor, or neutral/local).
-
-```
-2repo /path/to/repo  →  graphify-out/* + REPO_CONTEXT.md + selected AI integration files
-```
-
-### What 2repo does
-
-Single command:
-
-```bash
-2repo /path/to/repo
-```
-
-Pipeline:
-
-1. Graph extraction (`graphify extract` or `graphify update`)
-2. Execution knowledge extraction (`EXECUTION.md`)
-3. Repo memory materialization (`repo-memory.json`, `REPO_MEMORY.md`)
-4. Semantic index build (`repo-index.json`)
-5. Canonical context build (`REPO_CONTEXT.md`)
-6. Targeted editor injection (single selected AI target)
-7. State write for staleness + layer metadata (`.2repo-state.json`)
-
-Fail-fast rule: if required artifacts are missing, 2repo exits with error (no placeholders).
-
-### Generated artifacts (repo-local only)
-
-After a successful run, the target repository gets:
-
-```text
-<repo>/
-├── graphify-out/
-│   ├── GRAPH_REPORT.md
-│   ├── graph.json
-│   ├── EXECUTION.md
-│   ├── repo-memory.json
-│   ├── REPO_MEMORY.md
-│   ├── repo-index.json
-│   ├── REPO_CONTEXT.md
-│   └── .2repo-state.json
-```
-
-Only one integration target is generated per run:
-
-- Claude: `.claude/KNOWLEDGE.md` + `CLAUDE.md`
-- Copilot: `.github/copilot-instructions.md`
-- Cursor: `.cursor/rules/2repo.mdc`
-- Neutral target: no editor-specific file
-
-No Obsidian outputs are generated by 2repo.
-
-#### File objectives
-
-| File | Objective |
-|---|---|
-| `graphify-out/GRAPH_REPORT.md` | Human + AI summary of repository structure, modules, and relationships |
-| `graphify-out/graph.json` | Raw graph data produced by graphify |
-| `graphify-out/EXECUTION.md` | Build/test/runbook-style operational knowledge extracted from the repo |
-| `graphify-out/repo-memory.json` | Durable machine-readable memory entries stored by 2repo |
-| `graphify-out/REPO_MEMORY.md` | Human-readable rendering of durable memory entries |
-| `graphify-out/repo-index.json` | Semantic retrieval index used by `2repo --query` |
-| `graphify-out/REPO_CONTEXT.md` | Canonical context synthesized for AI assistant consumption |
-| `graphify-out/.2repo-state.json` | Baseline commit + metadata used for staleness checks and hooks |
-| `.claude/KNOWLEDGE.md` + `CLAUDE.md` | Claude integration that points Claude Code to `REPO_CONTEXT.md` |
-| `.github/copilot-instructions.md` | Copilot integration instructions with managed 2repo context block |
-| `.cursor/rules/2repo.mdc` | Cursor global project rule that applies 2repo context |
-
-### Commands
-
-```bash
-# Full run
-2repo /path/to/repo
-
-# Optional non-interactive target selection (otherwise 2repo shows a small CLI selector)
-2repo /path/to/repo --ai-target copilot
-
-# Incremental graph update
-2repo /path/to/repo --update
-
-# Rebuild index/context/injections from existing artifacts
-2repo /path/to/repo --reindex
-
-# Staleness check / hook
-2repo /path/to/repo --check
-2repo /path/to/repo --install-hook
-
-# Semantic retrieval
-2repo /path/to/repo --query "how do I run tests?" --top-k 5
-
-# Durable repo memory
-2repo /path/to/repo --remember "Use make test for fast CI parity" --memory-kind runbook --memory-source manual
-```
-
-`--memory-kind` values:
-
-- `fact`
-- `decision`
-- `runbook`
-
-### Semantic retrieval model
-
-`repo-index.json` stores chunked vectors from:
-
-- `graphify-out/*` textual artifacts
-- runtime metadata
-- persisted repo memory entries
-
-Querying uses cosine similarity over TF-IDF vectors plus query expansion from top-ranked chunks, then returns ranked context snippets.
-
-### State model
-
-2repo writes `graphify-out/.2repo-state.json` with:
-
-- baseline git commit (`head`)
-- stale threshold (`threshold`)
-- per-layer metadata (`layers.execution`, `layers.memory`, `layers.index`, `layers.context`)
-
-`--check` compares git changes since the baseline commit while excluding generated artifacts.
-
-### AI target selection and injections
-
-All integrations use one canonical source:
-
-- `graphify-out/REPO_CONTEXT.md`
-
-When `--ai-target` is not passed, 2repo prompts a small CLI selection (non-interactive runs default to `neutral`):
-
-- `claude`
-- `copilot`
-- `cursor`
-- `neutral` (local models/custom setups; no editor-specific file generation)
-
-Generated outputs by selection:
-
-- Claude: `.claude/KNOWLEDGE.md` and managed block in `CLAUDE.md`
-- Copilot: managed block in `.github/copilot-instructions.md`
-- Cursor: `.cursor/rules/2repo.mdc`
-- Neutral: no claude/copilot/cursor files
-
-### 2repo configuration (`.env`)
-
-| Variable | Default | What it does |
-|---|---|---|
-| `REPO_PRESET_GRAPH` | `smart` | Preset used for graphify extraction (`2repo`) |
-| `REPO_AI_TARGET` | — | Optional default AI target (`claude`, `copilot`, `cursor`, `neutral`) |
-| `REPO_STALE_THRESHOLD` | `5` | Files-changed threshold for stale warnings (`0` disables warning mode) |
+Done. From now on: type `2brain`, note appears in Obsidian. Type `2repo /path/to/repo` to generate repository intelligence for any codebase.
 
 ---
 
 ## Using a paid AI provider
 
-Add the API key to `.env`, define a preset for it, and either set it as your default or pass `--preset` when you want to use it.
+Add the API key to `.env`, define a preset for it, and either set it as your default or pass `--preset` when you want to use it. This applies to both `2brain` and `2repo`.
 
 **Claude (Anthropic):**
 ```bash
@@ -768,6 +244,8 @@ All config lives in `.env`. Never edit `docker-compose.yml` directly.
 | `OLLAMA_NUM_CTX` | `32000` | Context window (max tokens per request) |
 | `OLLAMA_NUM_THREAD` | `1` | CPU threads for Ollama (keep low to leave headroom) |
 | `OLLAMA_MEM_LIMIT` | `16g` | RAM limit for the Ollama container |
+
+See [docs/2repo.md](docs/2repo.md#2repo-configuration-env) for `2repo`-specific variables (`REPO_PRESET_GRAPH`, `REPO_AI_TARGET`, `REPO_STALE_THRESHOLD`).
 
 ---
 
