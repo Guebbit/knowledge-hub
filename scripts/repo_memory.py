@@ -25,7 +25,7 @@ def _memory_report_file(repo: Path) -> Path:
 def _normalize_text(text: str) -> str:
     normalized = re.sub(r"\s+", " ", text).strip()
     if not normalized:
-        raise ValueError("memory text cannot be empty or contain only whitespace")
+        raise ValueError("repository memory entry text cannot be empty or contain only whitespace")
     return normalized
 
 
@@ -51,7 +51,7 @@ def load_entries(repo_path: str) -> list[dict[str, str]]:
         source = raw.get("source")
         entry_id = raw.get("id")
         created_at = raw.get("created_at")
-        if not all(isinstance(v, str) for v in [text, kind, source, entry_id, created_at]):
+        if not all(isinstance(value, str) for value in [text, kind, source, entry_id, created_at]):
             continue
         normalized.append(
             {

@@ -29,6 +29,7 @@ globs: ["**/*"]
 alwaysApply: true
 ---
 
+# Intentional: repository context must be applied globally for consistent sessions.
 Use `graphify-out/REPO_CONTEXT.md` as the primary repository context.
 For detailed references consult:
 - `graphify-out/GRAPH_REPORT.md`

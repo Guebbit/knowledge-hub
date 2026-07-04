@@ -158,8 +158,8 @@ def _compute_idf(chunk_token_sets: list[set[str]]) -> dict[str, float]:
     df: Counter[str] = Counter()
     for tokens in chunk_token_sets:
         df.update(tokens)
-    # Smoothed IDF keeps values > 0 for very common terms and avoids division by zero.
-    # The final +1.0 offset avoids zeroing weights when df ~= docs and stabilizes ranking.
+    # Inner (+1) terms smooth df/docs to avoid division-by-zero and undefined log values.
+    # Outer (+1.0) keeps weights positive for ranking stability when terms are very common.
     return {token: math.log((1.0 + docs) / (1.0 + count)) + 1.0 for token, count in df.items()}
 
 
