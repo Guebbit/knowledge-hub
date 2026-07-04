@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+
+_MEMORY_SUBPATH = Path("graphify-out/repo-memory.json")
+_MEMORY_REPORT_SUBPATH = Path("graphify-out/REPO_MEMORY.md")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _memory_file(repo: Path) -> Path:
+    return repo / _MEMORY_SUBPATH
+
+
+def _memory_report_file(repo: Path) -> Path:
+    return repo / _MEMORY_REPORT_SUBPATH
+
+
+def _normalize_text(text: str) -> str:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if not normalized:
+        raise ValueError("memory text cannot be empty")
+    return normalized
+
+
+def load_entries(repo_path: str) -> list[dict[str, str]]:
+    repo = Path(repo_path)
+    path = _memory_file(repo)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid memory file: {path}") from exc
+    entries = data.get("entries", []) if isinstance(data, dict) else []
+    if not isinstance(entries, list):
+        raise ValueError(f"invalid memory entries in {path}")
+
+    normalized: list[dict[str, str]] = []
+    for raw in entries:
+        if not isinstance(raw, dict):
+            continue
+        text = raw.get("text")
+        kind = raw.get("kind")
+        source = raw.get("source")
+        entry_id = raw.get("id")
+        created_at = raw.get("created_at")
+        if not all(isinstance(v, str) for v in [text, kind, source, entry_id, created_at]):
+            continue
+        normalized.append(
+            {
+                "id": entry_id,
+                "text": _normalize_text(text),
+                "kind": kind,
+                "source": source,
+                "created_at": created_at,
+                "head": str(raw.get("head") or ""),
+                "index_revision": str(raw.get("index_revision") or ""),
+            }
+        )
+    return normalized
+
+
+def _write_entries(repo: Path, entries: list[dict[str, str]]) -> None:
+    path = _memory_file(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "updated_at": _now_iso(),
+        "entries": entries,
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def add_entry(
+    repo_path: str,
+    *,
+    text: str,
+    kind: str,
+    source: str,
+    head: str,
+    index_revision: str,
+) -> dict[str, str]:
+    repo = Path(repo_path)
+    normalized_text = _normalize_text(text)
+    normalized_kind = kind.strip().lower()
+    if normalized_kind not in {"fact", "decision", "runbook"}:
+        raise ValueError("memory kind must be one of: fact, decision, runbook")
+
+    entries = load_entries(repo_path)
+    for entry in entries:
+        if entry["text"].casefold() == normalized_text.casefold() and entry["kind"] == normalized_kind:
+            entry["source"] = source.strip() or "manual"
+            entry["head"] = head
+            entry["index_revision"] = index_revision
+            _write_entries(repo, entries)
+            return entry
+
+    digest = hashlib.sha256(f"{normalized_kind}:{normalized_text}".encode("utf-8")).hexdigest()
+    entry = {
+        "id": digest[:16],
+        "text": normalized_text,
+        "kind": normalized_kind,
+        "source": source.strip() or "manual",
+        "created_at": _now_iso(),
+        "head": head,
+        "index_revision": index_revision,
+    }
+    entries.append(entry)
+    _write_entries(repo, entries)
+    return entry
+
+
+def sync_entries(repo_path: str, *, head: str, index_revision: str) -> int:
+    repo = Path(repo_path)
+    entries = load_entries(repo_path)
+    updated = 0
+    for entry in entries:
+        if entry.get("head") != head or entry.get("index_revision") != index_revision:
+            entry["head"] = head
+            entry["index_revision"] = index_revision
+            updated += 1
+    if updated:
+        _write_entries(repo, entries)
+    return updated
+
+
+def write_memory_report(repo_path: str) -> Path:
+    repo = Path(repo_path)
+    report_path = _memory_report_file(repo)
+    entries = load_entries(repo_path)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines: list[str] = []
+    lines.append("# Repo Memory")
+    lines.append("")
+    lines.append("_Durable memory entries scoped to this repository._")
+    lines.append("")
+
+    if not entries:
+        lines.append("- No memory entries recorded yet.")
+    else:
+        for entry in entries:
+            lines.append(f"- **[{entry['kind']}]** {entry['text']}")
+            lines.append(f"  - id: `{entry['id']}`")
+            lines.append(f"  - source: `{entry['source']}`")
+            lines.append(f"  - created_at: `{entry['created_at']}`")
+
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report_path
+
+
+def memory_digest(repo_path: str) -> str:
+    entries = load_entries(repo_path)
+    payload = "\n".join(f"{e['id']}|{e['kind']}|{e['text']}" for e in entries)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
