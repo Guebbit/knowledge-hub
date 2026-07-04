@@ -253,6 +253,11 @@ def _prune_stale_pages(repo_path: str, valid_pages: set[str]) -> list[str]:
     return removed
 
 
+def _page_is_fresh(repo_path: str, rel_path: str, cached: dict[str, str], content_hash: str) -> bool:
+    """A page is fresh when its cached source hash matches and the page file still exists."""
+    return cached.get("hash") == content_hash and (wiki_dir(repo_path) / page_name_for(rel_path)).exists()
+
+
 def generate(
     repo_path: str,
     *,
@@ -288,7 +293,7 @@ def generate(
     for rel_path in sorted(targets):
         content_hash = _hash_bytes((repo / rel_path).read_bytes())
         cached = cache.get(rel_path, {})
-        if not force_all and cached.get("hash") == content_hash and (wiki_dir(repo_path) / page_name_for(rel_path)).exists():
+        if not force_all and _page_is_fresh(repo_path, rel_path, cached, content_hash):
             continue
         plan.append((rel_path, content_hash))
 

@@ -283,6 +283,7 @@ if [[ "${{threshold}}" -gt 0 && "${{changed}}" -ge "${{threshold}}" ]]; then
   echo "Wiki: 2repo . --wiki    (incremental wiki refresh for changed files)" >&2
 fi
 
+# Auto-refresh the wiki when: enabled at hook-install time, something changed, and the 2repo alias exists.
 if [[ "{wiki_auto}" == "1" && "${{changed}}" -gt 0 ]] && command -v 2repo >/dev/null 2>&1; then
   echo "2repo: refreshing wiki incrementally (REPO_WIKI_AUTO=1)..." >&2
   2repo "${{repo_root}}" --wiki || echo "2repo: wiki refresh failed — run manually: 2repo . --wiki" >&2
