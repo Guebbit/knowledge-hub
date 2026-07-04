@@ -362,7 +362,7 @@ def _resolve_ai_target(cli_target: str | None = None) -> str:
         print(f"  {key}) {label} ({value})")
 
     while True:
-        choice = input("Select AI target [1-4]: ").strip().lower()
+        choice = input("Select AI target [1-4 or claude/copilot/cursor/neutral]: ").strip().lower()
         for key, value, _ in _AI_TARGET_PROMPT:
             if choice == key or choice == value:
                 return value
