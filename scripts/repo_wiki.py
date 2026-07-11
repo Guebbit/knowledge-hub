@@ -376,9 +376,10 @@ def mirror_to_vault(repo_path: str, vault_path: Path) -> Path:
 
     source_markdown = list(source.glob("*.md"))
     source_pages = {page.name for page in source_markdown}
+    existing_pages = {page.name: page for page in destination.glob("*.md")}
     for page in source_markdown:
         shutil.copy2(page, destination / page.name)
-    for page in destination.glob("*.md"):
-        if page.name not in source_pages:
+    for name, page in existing_pages.items():
+        if name not in source_pages:
             page.unlink()
     return destination

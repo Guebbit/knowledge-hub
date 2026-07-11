@@ -173,7 +173,8 @@ Model selection: `--preset NAME` > `REPO_PRESET_WIKI` > `REPO_PRESET_GRAPH` > de
 
 After generation the wiki pages are folded into the semantic index (`2repo query` retrieves them) and referenced from `REPO_CONTEXT.md`. Wiki pages are **generated artifacts — never edit them by hand**; regenerate with `2repo wiki <repo>`.
 
-When mirrored to Obsidian, generated pages stay one-way and machine-owned in `vault/Projects/<repo-name>/Generated/`; keep human-written project notes in the sibling `vault/Projects/<repo-name>/Notes/` folder so they are not overwritten on refresh.
+When mirrored to Obsidian, generated pages stay one-way and machine-owned in `vault/Projects/<repo-name>/Generated/`.
+Keep human-written project notes in the sibling `vault/Projects/<repo-name>/Notes/` folder so they are not overwritten on refresh.
 
 Post-commit automation: `2repo hook` always adds a wiki refresh reminder to the stale warning. Set `REPO_WIKI_AUTO=1` before running `2repo hook` to make the hook run `2repo wiki .` automatically after commits (requires the `2repo` alias on the host).
 
