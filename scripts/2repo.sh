@@ -17,7 +17,7 @@
 #   2repo wiki . src/auth.ts src/db.ts   # target specific files (+ graph neighbors)
 #   2repo wiki . --force-all             # full wiki rebuild
 #   2repo wiki . --dry-run               # preview which pages would regenerate
-#   2repo wiki . --mirror-vault          # also copy wiki pages into the Obsidian vault
+#   2repo wiki . --mirror-vault          # also mirror wiki pages into vault/Projects/<repo>/Generated
 #
 # Legacy flag syntax (2repo . --wiki, --check, --query, ...) still works but is deprecated.
 #
