@@ -15,7 +15,7 @@ Usage (via 2repo.sh alias) — one subcommand per category:
   2repo wiki . src/auth.ts src/db.ts     # target specific files (+ their graph neighbors)
   2repo wiki . --force-all               # full wiki rebuild (ignore cache and baseline)
   2repo wiki . --dry-run                 # list pages that would be regenerated (no LLM calls)
-  2repo wiki . --mirror-vault            # also copy wiki pages into the Obsidian vault (Projects/<repo>)
+  2repo wiki . --mirror-vault            # also mirror wiki pages into vault/Projects/<repo>/Generated
 
 Legacy flag syntax (2repo . --wiki, --check, --query, ...) still works but is deprecated.
 """
@@ -625,7 +625,7 @@ def main() -> None:
     wiki_parser.add_argument("files", nargs="*", metavar="FILE", help="Optional explicit files to regenerate (plus their graph neighbors)")
     wiki_parser.add_argument("--force-all", action="store_true", help="Full rebuild, ignoring cache and baseline")
     wiki_parser.add_argument("--dry-run", action="store_true", help="List pages that would regenerate, without calling the LLM")
-    wiki_parser.add_argument("--mirror-vault", action="store_true", help="Copy wiki pages into the Obsidian vault (Projects/<repo-name>)")
+    wiki_parser.add_argument("--mirror-vault", action="store_true", help="Mirror wiki pages into the Obsidian vault (Projects/<repo-name>/Generated)")
     wiki_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_WIKI (e.g. smart, local, big)")
     wiki_parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
 

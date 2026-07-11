@@ -69,6 +69,11 @@ YOUR BRAIN (ADHD)
 │                              │    ├── REPO_CONTEXT.md  ← AI assistant starts here
 │                              │    └── wiki/            ← living LLM wiki (2repo wiki)
 │                              │
+│                              ├── optional Obsidian mirror
+│                              │    └── vault/Projects/my-repo/
+│                              │         ├── Generated/       ← mirrored wiki pages from 2repo
+│                              │         └── Notes/           ← human-authored project notes
+│                              │
 │                              └── selected AI bridge file
 │                                   (.claude/KNOWLEDGE.md, CLAUDE.md,
 │                                   .github/copilot-instructions.md,

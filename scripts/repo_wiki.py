@@ -364,12 +364,20 @@ def _repo_display_name(repo_path: str) -> str:
 
 
 def mirror_to_vault(repo_path: str, vault_path: Path) -> Path:
-    """Copy graphify-out/wiki into the Obsidian vault under Projects/<repo-name>/."""
+    """Mirror graphify-out/wiki into the Obsidian vault under Projects/<repo-name>/Generated/."""
     source = wiki_dir(repo_path)
     if not source.exists():
         raise FileNotFoundError(f"wiki not generated yet: {source}")
-    destination = vault_path / "Projects" / _repo_display_name(repo_path)
+    project_root = vault_path / "Projects" / _repo_display_name(repo_path)
+    destination = project_root / "Generated"
+    notes_dir = project_root / "Notes"
     destination.mkdir(parents=True, exist_ok=True)
+    notes_dir.mkdir(parents=True, exist_ok=True)
+
+    source_pages = {page.name for page in source.glob("*.md")}
     for page in source.glob("*.md"):
         shutil.copy2(page, destination / page.name)
+    for page in destination.glob("*.md"):
+        if page.name not in source_pages:
+            page.unlink()
     return destination
