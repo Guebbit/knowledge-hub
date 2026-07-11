@@ -6,7 +6,7 @@ You hit a problem. You type `2brain "what I just learned"`. A structured note ap
 problem  →  2brain "topic"  →  note in Obsidian  →  never forget it again
 ```
 
-No cloud. No subscriptions. Runs locally.
+Local-first. Runs great with Ollama, and can also use paid Anthropic/OpenAI presets when you want stronger models.
 
 ---
 
@@ -23,11 +23,38 @@ Working memory is limited. With ADHD it's even more limited. Two things keep hap
 
 This system externalizes both problems.
 
+## Commands at a glance
+
+Use the README for the big picture, then jump into the command docs when you need flags and edge cases.
+
+### `2brain` — capture and organize knowledge in Obsidian
+
+| Command | What it does |
+|---|---|
+| `2brain "topic"` | Generate one structured note in `vault/Inbox/` |
+| `2brain "topic" -f Guides` | Generate a note directly into a chosen vault folder |
+| `2brain --from-file ./notes.md` | Turn an existing file into a structured note |
+| `2brain "topic" --explore` | Split a broad topic into multiple focused notes |
+| `2brain --relink-all` | Re-scan notes and add `[[wikilinks]]` across the vault |
+
 ### [`2brain`](docs/2brain.md) — second brain
 
 Type `2brain "what I just figured out"` and an AI writes a clean, structured note straight into your Obsidian vault. Zero friction, always the same format, searchable forever via Obsidian's graph view.
 
-→ Full usage, flags (`--link`, `--relink`, `--rework`, `--merge`, `--explore`, chain mode, etc.): **[docs/2brain.md](docs/2brain.md)**
+→ Full usage and every flag: **[docs/2brain.md](docs/2brain.md)**
+
+### `2repo` — build AI-ready repo context
+
+| Command | What it does |
+|---|---|
+| `2repo <repo>` / `2repo graph <repo>` | Run the full graph/context pipeline |
+| `2repo graph <repo> --update` | Refresh the graph incrementally |
+| `2repo check <repo>` | Warn if the generated repo context is stale |
+| `2repo hook <repo>` | Install the post-commit stale warning hook |
+| `2repo query <repo> "question"` | Ask questions against generated repo artifacts |
+| `2repo remember <repo> "fact" --kind fact` | Store a durable repo memory entry |
+| `2repo reindex <repo>` | Rebuild retrieval/context from existing artifacts |
+| `2repo wiki <repo>` | Generate the living per-file wiki |
 
 ### [`2repo`](docs/2repo.md) — repository intelligence for AI coding sessions
 
@@ -45,7 +72,7 @@ One subcommand per category, so no single command does too many different things
 2repo wiki .                      # living LLM wiki: per-file docs, updated incrementally
 ```
 
-→ Full pipeline, generated artifacts, commands, configuration: **[docs/2repo.md](docs/2repo.md)**
+→ Full pipeline, generated artifacts, commands, and configuration: **[docs/2repo.md](docs/2repo.md)**
 
 ### How the two fit together
 
@@ -158,7 +185,7 @@ Edit `.env` — at minimum set this:
 LINUX_USERNAME=yourname   # your Linux username, for ~/.ollama mount
 ```
 
-The default preset (`PRESET_LOCAL=ollama:qwen3:8b`) works out of the box once you pull the model in step 5. Add or change presets in the `PRESETS` section if needed.
+The default preset (`PRESET_LOCAL=ollama:qwen3:8b`) works out of the box once you pull the model in step 5. Presets are still the main model-routing mechanism for both commands: keep a local preset for cheap/simple work, add paid presets for heavy jobs, and point `2repo` at a stronger default if you want.
 
 ### 2. Register `2brain` and `2repo` as global commands
 
@@ -219,6 +246,16 @@ Done. From now on: type `2brain`, note appears in Obsidian. Type `2repo /path/to
 
 Add the API key to `.env`, define a preset for it, and either set it as your default or pass `--preset` when you want to use it. This applies to both `2brain` and `2repo`.
 
+### Presets still exist — and they are the intended way to mix local + paid models
+
+- `DEFAULT_PRESET` controls `2brain` (and any `2repo` path that does not override it)
+- `--preset <name>` lets you switch per command
+- `REPO_PRESET_GRAPH` lets `2repo graph`, `2repo reindex`, and `2repo remember` use a different default than `2brain`
+- `REPO_PRESET_WIKI` lets `2repo wiki` use its own default, falling back to `REPO_PRESET_GRAPH`
+- `REPO_AI_TARGET` optionally picks the default bridge target (`claude`, `copilot`, `cursor`, `neutral`)
+
+That means the workflow you described is supported: for example, keep `DEFAULT_PRESET=local` for everyday `2brain` usage, set `REPO_PRESET_GRAPH=smart` for heavier repo understanding, and optionally set `REPO_PRESET_WIKI=local` if you want the wiki refreshes to stay cheap.
+
 **Claude (Anthropic):**
 ```bash
 # .env
@@ -262,8 +299,13 @@ All config lives in `.env`. Never edit `docker-compose.yml` directly.
 | `OLLAMA_NUM_CTX` | `32000` | Context window (max tokens per request) |
 | `OLLAMA_NUM_THREAD` | `1` | CPU threads for Ollama (keep low to leave headroom) |
 | `OLLAMA_MEM_LIMIT` | `16g` | RAM limit for the Ollama container |
+| `REPO_PRESET_GRAPH` | `smart` | Default preset for `2repo graph`, `reindex`, and `remember` |
+| `REPO_PRESET_WIKI` | falls back to `REPO_PRESET_GRAPH` | Default preset for `2repo wiki` |
+| `REPO_AI_TARGET` | prompt / `neutral` in non-interactive runs | Default 2repo integration target |
+| `REPO_STALE_THRESHOLD` | `5` | Files-changed threshold for stale warnings |
+| `REPO_WIKI_AUTO` | — | Set to `1` before `2repo hook` to auto-run `2repo wiki .` after commits |
 
-See [docs/2repo.md](docs/2repo.md#2repo-configuration-env) for `2repo`-specific variables (`REPO_PRESET_GRAPH`, `REPO_PRESET_WIKI`, `REPO_AI_TARGET`, `REPO_STALE_THRESHOLD`, `REPO_WIKI_AUTO`).
+More detail for both commands lives in **[docs/2brain.md](docs/2brain.md)** and **[docs/2repo.md](docs/2repo.md)**.
 
 ---
 
