@@ -374,8 +374,9 @@ def mirror_to_vault(repo_path: str, vault_path: Path) -> Path:
     destination.mkdir(parents=True, exist_ok=True)
     notes_dir.mkdir(parents=True, exist_ok=True)
 
-    source_pages = {page.name for page in source.glob("*.md")}
-    for page in source.glob("*.md"):
+    source_markdown = list(source.glob("*.md"))
+    source_pages = {page.name for page in source_markdown}
+    for page in source_markdown:
         shutil.copy2(page, destination / page.name)
     for page in destination.glob("*.md"):
         if page.name not in source_pages:
