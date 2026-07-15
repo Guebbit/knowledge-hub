@@ -14,6 +14,28 @@
 
 ---
 
+## Flags at a glance
+
+| Flag | What it does |
+|---|---|
+| `-f <Folder>` | Route the note to a vault folder (default `Inbox`) |
+| `--title "..."` | Override the generated title |
+| `--from-file <path>` | Digest an existing file (md, txt, PDF, audio, video) instead of a topic |
+| `--prompt "..."` | Extra instructions for the AI (focus, exclude, restyle) |
+| `--preset <name>` | Use a specific model preset for this call |
+| `--explore` | Split one topic/file into several focused notes (AI picks how many) |
+| `--split <N>` | Split into exactly `N` notes |
+| `--no-context` | With `--explore`/`--split`, generate each note independently |
+| `--link` | Let the AI add `[[wikilinks]]` to existing notes while generating |
+| `--relink <file>` | Add `[[wikilinks]]` to one existing note, nothing else changed |
+| `--relink-all` | Add `[[wikilinks]]` to every note (use `-f` to limit to a folder) |
+| `--rework <file>` | Rewrite an existing note in place |
+| `--merge <files…>` | Combine multiple notes into one deduplicated note |
+
+Positional topics can be chained: `2brain "topic A" "topic B" "topic C"` → one note each.
+
+---
+
 ## How it works
 
 | Who | Does what |
@@ -339,6 +361,54 @@ If the combined content is dense enough to split into focused subtopics, add `--
 2brain "docker compose cheat sheet" -f Reference
 ```
 
+**Digest a voice memo into action items:**
+```bash
+2brain --from-file ./standup.m4a --prompt "extract action items only" -f Projects
+```
+
+**Retrofit an old note into the graph:**
+```bash
+2brain --relink vault/Reference/Ollama.md
+```
+
 ---
 
-See the main [README](../README.md) for setup, configuration, and troubleshooting shared with `2repo`.
+## Configuration reference
+
+All config lives in `.env` (copied from `.env-example`). Never edit `docker-compose.yml` directly. These variables are shared with `2repo`; the `2repo`-specific ones are documented in **[docs/2repo.md](2repo.md)**.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `LINUX_USERNAME` | — | Your Linux username (for the `~/.ollama` mount) |
+| `CONTAINER_ENGINE` | `podman` | Container runtime: `docker` or `podman` |
+| `MODELS_PATH` | `~/.models` | Host dir for non-Ollama model files (e.g. Whisper) |
+| `DEFAULT_PRESET` | `fast` | Preset used when no `--preset` flag is passed |
+| `PRESET_<NAME>` | — | Define a preset: `provider:model` (e.g. `ollama:qwen3:8b`, `openai:gpt-4o`) |
+| `ANTHROPIC_API_KEY` | — | Required for any preset using the `anthropic` provider |
+| `OPENAI_API_KEY` | — | Required for any `openai` preset (also works with a GitHub Models PAT) |
+| `OPENAI_BASE_URL` | — | Override the OpenAI endpoint (e.g. GitHub Models / Azure) |
+| `OLLAMA_PORT` | `11434` | Port Ollama listens on |
+| `WHISPER_MODEL` | `base` | Whisper size: `tiny` `base` `small` `medium` `large-v3` |
+| `OLLAMA_KEEP_ALIVE` | `5m` | How long a model stays loaded in VRAM when idle |
+| `OLLAMA_NUM_CTX` | `32000` | Context window (max tokens per request) |
+| `OLLAMA_NUM_THREAD` | `1` | CPU threads for Ollama (keep low to leave headroom) |
+| `OLLAMA_MEM_LIMIT` | `16g` | RAM limit for the Ollama container |
+
+### Presets — mixing local and paid models
+
+A preset is a `provider:model` pair. The stack ships with two — a local `fast` and a cloud `deep` — but you can define as many as you want and switch per call:
+
+```bash
+# .env
+DEFAULT_PRESET=fast
+PRESET_FAST=ollama:qwen3:8b
+PRESET_DEEP=openai:gpt-4o
+```
+
+- `DEFAULT_PRESET` is used when you pass no `--preset`.
+- `--preset <name>` overrides it for a single command.
+- Keep `fast` for everyday capture; reach for `deep` on dense or important notes.
+
+---
+
+See the main [README](../README.md) for installation, the shared model cache, and troubleshooting.

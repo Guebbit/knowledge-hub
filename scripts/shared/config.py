@@ -15,8 +15,8 @@ except ImportError:
 # --- Presets -----------------------------------------------------------------
 
 # Parse all PRESET_* env vars into a dict of (provider, model) tuples.
-# e.g. PRESET_SMART=anthropic:claude-sonnet-4-6
-#   → PRESETS["smart"] = ("anthropic", "claude-sonnet-4-6")
+# e.g. PRESET_DEEP=openai:gpt-4o
+#   → PRESETS["deep"] = ("openai", "gpt-4o")
 PRESETS: dict[str, tuple[str, str]] = {}
 for _k, _v in os.environ.items():
     if _k.startswith("PRESET_") and ":" in _v:
@@ -26,7 +26,7 @@ for _k, _v in os.environ.items():
         PRESETS[_k[7:].lower()] = (_prov.lower(), _mod)
 
 # Which preset is active when no --preset flag is passed
-DEFAULT_PRESET: str = os.getenv("DEFAULT_PRESET", "local").lower()
+DEFAULT_PRESET: str = os.getenv("DEFAULT_PRESET", "fast").lower()
 
 # Resolve active provider and model from the default preset.
 # Falls back to local Ollama with a small model if DEFAULT_PRESET isn't defined.
@@ -55,6 +55,11 @@ OLLAMA_URL     = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "32768"))  # env vars are strings — int() converts
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "600"))
 
+# --- Claude Code CLI ----------------------------------------------------------
+
+# Seconds to wait for `claude -p` to return. Same default as OLLAMA_TIMEOUT.
+CLAUDE_CODE_TIMEOUT = int(os.getenv("CLAUDE_CODE_TIMEOUT", "600"))
+
 # --- Vault ------------------------------------------------------------------
 
 VAULT_PATH = Path(
@@ -69,3 +74,12 @@ MODELS_PATH = Path(
 )
 # set not list — membership checks (ext in AUDIO_EXTENSIONS) are O(1) on sets, O(n) on lists
 AUDIO_EXTENSIONS = {".mp3", ".mp4", ".wav", ".m4a", ".webm", ".ogg", ".flac"}
+
+# --- Generated paths (2repo) ------------------------------------------------
+#
+# Single source of truth for "what 2repo generates". Everything that must ignore
+# generated files derives from these two constants instead of hardcoding its own
+# copy: the git staleness pathspecs, _is_generated_path(), and the wiki's
+# documentable-file filter. Add a generated location once, here.
+GENERATED_DIR_PREFIXES = ("graphify-out/", ".claude/", ".cursor/")
+GENERATED_FILES = ("CLAUDE.md", ".github/copilot-instructions.md")

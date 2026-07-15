@@ -1,8 +1,14 @@
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg nodejs npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Claude Code CLI — backs graphify's "claude-cli" backend (REPO_PRESET_GRAPH
+# using a claude-code:* preset). Auth comes from the host's ~/.claude
+# credentials, bind-mounted read-only at runtime (see docker-compose.yml);
+# no ANTHROPIC_API_KEY needed, uses the Claude Code subscription instead.
+RUN npm install -g @anthropic-ai/claude-code
 
 RUN pip install --no-cache-dir \
     requests \
@@ -13,4 +19,4 @@ RUN pip install --no-cache-dir \
     pypdf \
     beautifulsoup4 \
     pathspec \
-    graphifyy
+    graphifyy==0.9.13

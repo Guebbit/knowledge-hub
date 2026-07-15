@@ -51,6 +51,18 @@ services:
       - ./vault:/vault:rw
       - ./scripts:/scripts:ro
       - /home/${LINUX_USERNAME}/.models:/models:z,rw
+      # Custom graphify provider forcing Ollama's JSON-mode ("format": "json")
+      # so local models can't return prose instead of the requested graph
+      # JSON — see graphify/providers.json. Mounted at graphify's trusted
+      # global path (~/.graphify == /root/.graphify, container has no other
+      # user); read-only since the container never needs to write it.
+      - ./graphify/providers.json:/root/.graphify/providers.json:ro
+      # Claude Code CLI auth (backs graphify's "claude-cli" backend, used by
+      # a claude-code:* preset) — reuses your host Claude Code subscription
+      # login instead of a metered ANTHROPIC_API_KEY. Read-only: the
+      # container authenticates with these, never writes to them.
+      - /home/${LINUX_USERNAME}/.claude.json:/root/.claude.json:ro
+      - /home/${LINUX_USERNAME}/.claude/.credentials.json:/root/.claude/.credentials.json:ro
     environment:
       VAULT_PATH: /vault
       MODELS_PATH: /models
@@ -58,18 +70,16 @@ services:
       # Graphify requires a non-empty value when OLLAMA_BASE_URL points to a
       # non-localhost host (docker service name). Ollama ignores auth entirely.
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-local}
-      DEFAULT_PRESET: ${DEFAULT_PRESET:-local}
-      PRESET_LOCAL: ${PRESET_LOCAL:-ollama:qwen3:8b}
-      PRESET_BIG: ${PRESET_BIG:-ollama:qwen3.6:27B}
-      PRESET_SMART: ${PRESET_SMART:-anthropic:claude-sonnet-4-6}
-      PRESET_CHEAP: ${PRESET_CHEAP:-openai:gpt-4o-mini}
+      DEFAULT_PRESET: ${DEFAULT_PRESET:-fast}
+      PRESET_FAST: ${PRESET_FAST:-ollama:qwen3:8b}
+      PRESET_DEEP: ${PRESET_DEEP:-openai:gpt-4o}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
       WHISPER_MODEL: ${WHISPER_MODEL:-base}
-      REPO_PRESET_GRAPH: ${REPO_PRESET_GRAPH:-smart}
+      REPO_PRESET_GRAPH: ${REPO_PRESET_GRAPH:-deep}
       REPO_PRESET_WIKI: ${REPO_PRESET_WIKI:-}
       REPO_AI_TARGET: ${REPO_AI_TARGET:-}
       REPO_STALE_THRESHOLD: ${REPO_STALE_THRESHOLD:-5}

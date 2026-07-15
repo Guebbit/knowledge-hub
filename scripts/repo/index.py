@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Semantic index for 2repo artifacts.
 
@@ -7,15 +5,17 @@ Builds a lightweight TF-IDF vector index from graphify-out artifacts and durable
 repo memory, then serves cosine-similarity retrieval for `2repo query`.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import math
 import re
 from collections import Counter
-from datetime import datetime, timezone
 from pathlib import Path
 
-import repo_memory
+from repo import memory as repo_memory
+from shared.utils import now_iso
 
 _INDEX_SUBPATH = Path("graphify-out/repo-index.json")
 _REQUIRED_ARTIFACTS = (
@@ -36,11 +36,6 @@ _QUERY_EXPANSION_WEIGHT = 0.35
 _BASE_SCORE_WEIGHT = 0.65
 _EXPANDED_SCORE_WEIGHT = 0.35
 _EXPANSION_SEED_TERMS_PER_CHUNK = 25
-
-
-def _now_iso() -> str:
-    """Return current UTC timestamp in ISO-8601 format."""
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _index_file(repo: Path) -> Path:
@@ -271,7 +266,7 @@ def build_index(repo_path: str, *, runtime_metadata: dict[str, str]) -> dict[str
 
     payload = {
         "version": 1,
-        "generated_at": _now_iso(),
+        "generated_at": now_iso(),
         "revision": revision,
         "artifact_digest": artifact_digest,
         "runtime_digest": runtime_digest,

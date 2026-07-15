@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Inject 2repo context into editor-specific instruction files.
 
@@ -7,6 +5,8 @@ This module writes/updates small "bridge" files (Claude, Copilot, Cursor) that
 point to graphify-out/REPO_CONTEXT.md so assistants can ground responses in the
 latest generated repository artifacts.
 """
+
+from __future__ import annotations
 
 import re
 from pathlib import Path
@@ -18,18 +18,15 @@ _MARKER_END = "<!-- 2repo:end -->"
 _MARKER_PATTERN = re.compile(re.escape(_MARKER_START) + r".*?" + re.escape(_MARKER_END), re.DOTALL)
 
 _PRIMARY_CONTEXT_PATH = "graphify-out/REPO_CONTEXT.md"
-_CONTEXT_REFERENCE_PATHS = (
-    "graphify-out/GRAPH_REPORT.md",
-    "graphify-out/EXECUTION.md",
-    "graphify-out/REPO_MEMORY.md",
-    "graphify-out/repo-index.json",
-)
+# (path, human description) pairs — the single source for both the reference
+# path list and the described artifact list, so they can never drift apart.
 _CONTEXT_ARTIFACTS = (
     ("graphify-out/GRAPH_REPORT.md", "structural and semantic code graph report"),
     ("graphify-out/EXECUTION.md", "runnable build/test/CI/migration knowledge"),
     ("graphify-out/REPO_MEMORY.md", "durable repository memory entries"),
     ("graphify-out/repo-index.json", "semantic retrieval index"),
 )
+_CONTEXT_REFERENCE_PATHS = tuple(path for path, _ in _CONTEXT_ARTIFACTS)
 
 _CLAUDE_INLINE = (
     f"{_MARKER_START}\n"
@@ -37,7 +34,9 @@ _CLAUDE_INLINE = (
     f"{_MARKER_END}"
 )
 
-_AI_TARGETS = ("claude", "copilot", "cursor", "neutral")
+# Public: the canonical set of AI integration targets. repo.py imports this so
+# the CLI choices and this module's validation share one definition.
+AI_TARGETS = ("claude", "copilot", "cursor", "neutral")
 
 
 def _expanded_sources_inline() -> str:
@@ -140,8 +139,8 @@ def inject_for_target(repo_path: str, *, ai_target: str) -> list[str]:
     context = repo / "graphify-out" / "REPO_CONTEXT.md"
     if not context.exists():
         raise FileNotFoundError(f"required context artifact missing: {context}")
-    if ai_target not in _AI_TARGETS:
-        raise ValueError(f"invalid ai target '{ai_target}' (expected one of: {', '.join(_AI_TARGETS)})")
+    if ai_target not in AI_TARGETS:
+        raise ValueError(f"invalid ai target '{ai_target}' (expected one of: {', '.join(AI_TARGETS)})")
 
     return _TARGET_WRITERS[ai_target](repo)
 

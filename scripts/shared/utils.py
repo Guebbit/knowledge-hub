@@ -4,14 +4,26 @@ Kept here so there's one place to change them, not one copy per file.
 """
 import re
 import sys
+from datetime import datetime, timezone
+from typing import NoReturn
 
 
-def die(msg: str) -> None:
-    """Print an error and exit immediately."""
+def die(msg: str) -> NoReturn:
+    """Print an error and exit immediately.
+
+    Return type is NoReturn so type checkers know execution stops here — code
+    after a die() call is unreachable, and callers annotated `-> str` etc. don't
+    appear to fall through returning None.
+    """
     # file=sys.stderr — errors go to the error stream, not stdout
     # This keeps error messages separate from normal output when piping commands
     print(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(1)  # any non-zero exit code signals failure to the calling shell
+
+
+def now_iso() -> str:
+    """Return the current UTC timestamp in ISO-8601 format."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def slugify(text: str) -> str:

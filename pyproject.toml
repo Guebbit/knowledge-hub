@@ -1,0 +1,20 @@
+[project]
+name = "knowledge-hub"
+version = "0.1.0"
+description = "Second-brain stack: vault ingestion (2brain) and repo graph/wiki generation (2repo)."
+requires-python = ">=3.12"
+dependencies = [
+    "requests",
+    "python-dotenv",
+    "anthropic",
+    "openai",
+    "faster-whisper",
+    "pypdf",
+    "beautifulsoup4",
+    "pathspec",
+    # Pinned — graphifyy ships near-daily and has shipped breaking CLI changes
+    # between releases (e.g. `extract` no longer writing GRAPH_REPORT.md).
+    # Bump deliberately; see scripts/repo.py _run_graphify for the workaround
+    # this pin protects.
+    "graphifyy==0.9.13",
+]

@@ -7,14 +7,19 @@ this file. To add a new provider: write a _call_X function, add it to _ADAPTERS 
 Then use it via a preset in .env: PRESET_X=yourprovider:some-model
 
 config.PROVIDER and config.MODEL are read at call time (not import time) so that
-runtime overrides via --provider / --preset / --model take effect.
+runtime overrides via --preset take effect.
 """
 import os
+from typing import Callable
 
 # Import the module object so runtime mutations to config.PROVIDER / config.MODEL are visible.
-import config
-from config import OLLAMA_URL, OLLAMA_NUM_CTX, OLLAMA_TIMEOUT  # these never change at runtime
-from utils import die
+from shared import config
+from shared.config import OLLAMA_URL, OLLAMA_NUM_CTX, OLLAMA_TIMEOUT, CLAUDE_CODE_TIMEOUT  # these never change at runtime
+from shared.utils import die
+
+# Hard cap on response length in tokens, shared by every provider so behavior is
+# identical regardless of backend (1 token ≈ 0.75 words).
+_MAX_TOKENS = 4096
 
 
 def call_llm(prompt: str) -> str:
@@ -24,9 +29,9 @@ def call_llm(prompt: str) -> str:
 
 
 def _fallback_to_local(reason: str) -> bool:
-    """Warn about a missing credential and offer to fall back to the local preset."""
+    """Warn about a missing credential and offer to fall back to the local `fast` preset."""
     import sys
-    fallback_provider, fallback_model = config.PRESETS.get("local", ("ollama", "qwen3:8b"))
+    fallback_provider, fallback_model = config.PRESETS.get("fast", ("ollama", "qwen3:8b"))
     print(f"\nWarning  : {reason}")
     if not sys.stdin.isatty():
         # Non-interactive (piped / CI): auto-fall back without prompting.
@@ -93,7 +98,7 @@ def _call_anthropic(prompt: str) -> str:
     client = anthropic.Anthropic(api_key=key)
     msg = client.messages.create(
         model=config.MODEL,
-        max_tokens=4096,      # hard cap on response length in tokens (1 token ≈ 0.75 words)
+        max_tokens=_MAX_TOKENS,   # Anthropic requires an explicit cap
         messages=[{"role": "user", "content": prompt}],
     )
     # .content is a list of content blocks (text, images, tool calls...) — [0] is always the text reply
@@ -118,17 +123,50 @@ def _call_openai(prompt: str) -> str:
     client = OpenAI(api_key=key, base_url=base_url)
     res = client.chat.completions.create(
         model=config.MODEL,
+        max_tokens=_MAX_TOKENS,   # keep the response cap identical across providers
         messages=[{"role": "user", "content": prompt}],
     )
     # .choices is a list of candidate completions (usually 1); [0] is the first/only one
     return res.choices[0].message.content
 
 
+def _call_claude_code(prompt: str) -> str:
+    """Route through the `claude` CLI instead of the Anthropic API.
+
+    Uses whatever Claude Code login/subscription is active on this machine —
+    no ANTHROPIC_API_KEY needed, no per-token API billing. Trade-off: spawns a
+    fresh CLI process per call and is slower than a direct API request.
+    """
+    import json
+    import subprocess
+
+    try:
+        res = subprocess.run(
+            ["claude", "-p", prompt, "--model", config.MODEL, "--output-format", "json"],
+            capture_output=True,
+            text=True,
+            timeout=CLAUDE_CODE_TIMEOUT,
+        )
+    except FileNotFoundError:
+        die("claude CLI not found on PATH — install Claude Code: https://docs.claude.com/claude-code")
+    except subprocess.TimeoutExpired:
+        die(f"claude CLI timed out after {CLAUDE_CODE_TIMEOUT}s")
+
+    if res.returncode != 0:
+        die(f"claude CLI exited {res.returncode}: {res.stderr.strip()}")
+
+    try:
+        return json.loads(res.stdout)["result"]
+    except (json.JSONDecodeError, KeyError):
+        die("claude CLI returned unexpected output — could not parse 'result' field")
+
+
 # Dispatch table — maps provider names to their adapter functions.
 # Defined here (after the functions) so all names are already in scope.
 # Add a new provider by adding one line here + a _call_X function above.
-_ADAPTERS: dict[str, object] = {
-    "ollama":    _call_ollama,
-    "anthropic": _call_anthropic,
-    "openai":    _call_openai,
+_ADAPTERS: dict[str, Callable[[str], str]] = {
+    "ollama":      _call_ollama,
+    "anthropic":   _call_anthropic,
+    "openai":      _call_openai,
+    "claude-code": _call_claude_code,
 }

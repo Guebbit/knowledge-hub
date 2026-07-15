@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Living wiki generator for 2repo (Karpathy / DeepWiki-style llm-wiki concept).
 
@@ -14,14 +12,17 @@ Incrementality is the core design:
 Page naming replaces `/` and `.` with `_` (e.g. src/auth/login.ts → src_auth_login_ts.md).
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import shutil
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 
-from providers import call_llm
+from shared.config import GENERATED_DIR_PREFIXES
+from shared.providers import call_llm
+from shared.utils import now_iso
 
 _WIKI_SUBPATH = Path("graphify-out/wiki")
 _CACHE_FILENAME = ".wiki-cache.json"
@@ -75,11 +76,6 @@ Rules:
 - Be factual and short. Never invent features that are not evidenced."""
 
 
-def _now_iso() -> str:
-    """Return current UTC timestamp in ISO-8601 format."""
-    return datetime.now(timezone.utc).isoformat()
-
-
 def wiki_dir(repo_path: str) -> Path:
     """Return the wiki output directory for a repository."""
     return Path(repo_path) / _WIKI_SUBPATH
@@ -105,7 +101,7 @@ def _load_cache(repo_path: str) -> dict[str, dict[str, str]]:
 def _save_cache(repo_path: str, pages: dict[str, dict[str, str]]) -> None:
     path = _cache_file(repo_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"version": 1, "updated_at": _now_iso(), "pages": pages}
+    payload = {"version": 1, "updated_at": now_iso(), "pages": pages}
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -197,7 +193,9 @@ def expand_neighbors(seeds: set[str], adjacency: dict[str, set[str]], hops: int 
 
 def _is_documentable(repo: Path, rel_path: str) -> bool:
     """Only document real repo files that are not generated artifacts."""
-    if rel_path.startswith(("graphify-out/", ".git/", ".claude/", ".cursor/")):
+    # GENERATED_DIR_PREFIXES is the shared 2repo-generated set; .git/ is added
+    # here because the wiki also must never document version-control internals.
+    if rel_path.startswith(GENERATED_DIR_PREFIXES + (".git/",)):
         return False
     path = repo / rel_path
     if not path.is_file():
@@ -320,7 +318,7 @@ def generate(
         page = _generate_page(repo, rel_path, neighbors)
         page_file = out_dir / page_name_for(rel_path)
         page_file.write_text(page, encoding="utf-8")
-        cache[rel_path] = {"hash": content_hash, "page": page_file.name, "generated_at": _now_iso()}
+        cache[rel_path] = {"hash": content_hash, "page": page_file.name, "generated_at": now_iso()}
         written.append(page_file.name)
         print(f"Wiki     : wrote {page_file.name}  ({rel_path})")
 

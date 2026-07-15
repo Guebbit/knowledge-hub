@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Durable repository memory storage for 2repo.
 
@@ -7,19 +5,17 @@ Entries are stored in graphify-out/repo-memory.json and mirrored into
 graphify-out/REPO_MEMORY.md for human-readable inspection.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
 from pathlib import Path
+
+from shared.utils import now_iso
 
 _MEMORY_SUBPATH = Path("graphify-out/repo-memory.json")
 _MEMORY_REPORT_SUBPATH = Path("graphify-out/REPO_MEMORY.md")
-
-
-def _now_iso() -> str:
-    """Return current UTC timestamp in ISO-8601 format."""
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _memory_file(repo: Path) -> Path:
@@ -85,7 +81,7 @@ def _write_entries(repo: Path, entries: list[dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "version": 1,
-        "updated_at": _now_iso(),
+        "updated_at": now_iso(),
         "entries": entries,
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -125,7 +121,7 @@ def add_entry(
         "text": normalized_text,
         "kind": normalized_kind,
         "source": source.strip() or "manual",
-        "created_at": _now_iso(),
+        "created_at": now_iso(),
         "head": head,
         "index_revision": index_revision,
     }

@@ -10,7 +10,7 @@ import json
 import re
 from datetime import date
 
-from providers import call_llm
+from shared.providers import call_llm
 
 
 # --- Prompts -----------------------------------------------------------------
@@ -172,12 +172,23 @@ def build_frontmatter(title: str, tags: list[str], folder: str) -> str:
     tag_lines = "\n".join(f"  - {t}" for t in tags) if tags else "  - general"
     return (
         f"---\n"
-        f"title: \"{title}\"\n"
+        f"title: {_yaml_quote(title)}\n"
         f"tags:\n{tag_lines}\n"
         f"created: {date.today().isoformat()}\n"  # isoformat() → "2026-06-21"
         f"folder: {folder}\n"
         f"---\n\n"
     )
+
+
+def _yaml_quote(value: str) -> str:
+    """Return value as a safely double-quoted YAML scalar.
+
+    LLM-suggested titles can contain a literal " which would break the YAML
+    frontmatter (Obsidian then fails to read the note's title). Escape \\ and "
+    per the YAML double-quoted style so any title survives.
+    """
+    escaped = value.replace("\\", "\\\\").replace("\"", "\\\"")
+    return f"\"{escaped}\""
 
 
 # --- Internal helpers --------------------------------------------------------

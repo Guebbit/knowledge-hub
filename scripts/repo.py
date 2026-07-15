@@ -16,8 +16,6 @@ Usage (via 2repo.sh alias) — one subcommand per category:
   2repo wiki . --force-all               # full wiki rebuild (ignore cache and baseline)
   2repo wiki . --dry-run                 # list pages that would be regenerated (no LLM calls)
   2repo wiki . --mirror-vault            # also mirror wiki pages into vault/Projects/<repo>/Generated
-
-Legacy flag syntax (2repo . --wiki, --check, --query, ...) still works but is deprecated.
 """
 
 from __future__ import annotations
@@ -27,31 +25,44 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import config
-import repo_index
-import repo_injection
-import repo_memory
-import repo_wiki
-from repo_execution import generate as execution_generate
-from utils import die
+from repo import index as repo_index
+from repo import injection as repo_injection
+from repo import memory as repo_memory
+from repo import wiki as repo_wiki
+from repo.execution import generate as execution_generate
+from repo.injection import AI_TARGETS
+from shared import config
+from shared.config import GENERATED_DIR_PREFIXES, GENERATED_FILES
+from shared.utils import die
 
 
 _BACKEND_MAP = {
     "anthropic": "claude",
     "openai": "openai",
-    "ollama": "ollama",
+    # Routed to the custom "ollama-json" backend (graphify/providers.json)
+    # instead of graphify's built-in "ollama" — it sets Ollama's enforced
+    # format="json" so local models can't return prose instead of the
+    # requested graph JSON (see graphify/providers.json for details).
+    "ollama": "ollama-json",
+    # Shells out to the `claude` CLI (see Dockerfile.scripts) instead of the
+    # metered Anthropic API — uses the Claude Code subscription login
+    # bind-mounted in docker-compose.yml. graphify's claude-cli backend
+    # ignores the generic --model flag entirely; the model must be passed
+    # via GRAPHIFY_CLAUDE_CLI_MODEL instead (see _run_graphify).
+    "claude-code": "claude-cli",
 }
 
 _STATE_FILE_SUBPATH = Path("graphify-out/.2repo-state.json")
+# git pathspecs that exclude 2repo's own generated output from staleness diffs,
+# derived from the shared generated-path definitions in config.
 _STALE_EXCLUDES = [
-    ":(exclude)graphify-out/**",
-    ":(exclude).claude/**",
-    ":(exclude).cursor/**",
-    ":(exclude).github/copilot-instructions.md",
-    ":(exclude)CLAUDE.md",
+    *(f":(exclude){prefix}**" for prefix in GENERATED_DIR_PREFIXES),
+    *(f":(exclude){name}" for name in GENERATED_FILES),
 ]
 _PORCELAIN_STATUS_PREFIX_LENGTH = 3
 
@@ -61,7 +72,6 @@ _REQUIRED_PIPELINE_ARTIFACTS = (
     Path("graphify-out/EXECUTION.md"),
 )
 _QUERY_EXCERPT_LENGTH = 320
-_AI_TARGETS = ("claude", "copilot", "cursor", "neutral")
 _AI_TARGET_PROMPT = (
     ("1", "claude", "Claude Code"),
     ("2", "copilot", "GitHub Copilot"),
@@ -70,8 +80,21 @@ _AI_TARGET_PROMPT = (
 )
 
 
-def _resolve_preset(name: str | None) -> tuple[str, str]:
-    preset_name = (name or os.getenv("REPO_PRESET_GRAPH", "")).lower()
+def _resolve_preset(name: str | None, *, env_keys: tuple[str, ...] = ("REPO_PRESET_GRAPH",)) -> tuple[str, str]:
+    """Resolve (provider, model) from --preset, then the first non-empty env var
+    in env_keys, then the active default.
+
+    The graph pipeline uses REPO_PRESET_GRAPH; wiki passes
+    ("REPO_PRESET_WIKI", "REPO_PRESET_GRAPH") so it prefers a wiki-specific model
+    but falls back to the graph preset.
+    """
+    preset_name = name or ""
+    if not preset_name:
+        for key in env_keys:
+            preset_name = os.getenv(key, "")
+            if preset_name:
+                break
+    preset_name = preset_name.lower()
     if not preset_name:
         return config.PROVIDER, config.MODEL
     if preset_name not in config.PRESETS:
@@ -79,20 +102,46 @@ def _resolve_preset(name: str | None) -> tuple[str, str]:
     return config.PRESETS[preset_name]
 
 
-def _resolve_wiki_preset(name: str | None) -> tuple[str, str]:
-    """Resolve the wiki model preset: --preset > REPO_PRESET_WIKI > REPO_PRESET_GRAPH > default."""
-    preset_name = (name or os.getenv("REPO_PRESET_WIKI", "") or os.getenv("REPO_PRESET_GRAPH", "")).lower()
-    if not preset_name:
-        return config.PROVIDER, config.MODEL
-    if preset_name not in config.PRESETS:
-        die(f"preset '{preset_name}' not defined — add PRESET_{preset_name.upper()}=provider:model to .env")
-    return config.PRESETS[preset_name]
+_HEARTBEAT_INTERVAL_SECONDS = 20
+
+
+def _run_with_heartbeat(cmd: list[str], *, cwd: str, label: str, env: dict[str, str] | None = None) -> int:
+    """Run cmd (inheriting stdio) while printing a periodic elapsed-time line.
+
+    graphify's own progress output is chunky (per-100-files, per-LLM-chunk) and
+    silent in between — a long local-inference run can look hung with nothing
+    printed for minutes. This makes "still working" visible without touching
+    graphify's stdout.
+    """
+    start = time.monotonic()
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env)
+    stop = threading.Event()
+
+    def _tick() -> None:
+        while not stop.wait(_HEARTBEAT_INTERVAL_SECONDS):
+            elapsed = int(time.monotonic() - start)
+            print(f"{label} : still running ({elapsed}s elapsed)...", flush=True)
+
+    ticker = threading.Thread(target=_tick, daemon=True)
+    ticker.start()
+    try:
+        return proc.wait()
+    finally:
+        stop.set()
+        ticker.join()
 
 
 def _run_graphify(repo_path: str, provider: str, model: str, update: bool) -> None:
     backend = _BACKEND_MAP.get(provider)
     if not backend:
         die(f"provider '{provider}' has no graphify backend — supported: {list(_BACKEND_MAP)}")
+
+    env = None
+    if provider == "claude-code":
+        # graphify's claude-cli backend has no --model flag support; it only
+        # reads GRAPHIFY_CLAUDE_CLI_MODEL. Without this, the preset's model
+        # (e.g. "opus") is silently ignored and the CLI's own default is used.
+        env = {**os.environ, "GRAPHIFY_CLAUDE_CLI_MODEL": model}
 
     if update:
         cmd = ["graphify", "update", "."]
@@ -106,9 +155,26 @@ def _run_graphify(repo_path: str, provider: str, model: str, update: bool) -> No
         "(node_modules, dist, build, .next, ...)."
     )
     print(f"Graphify : {'update' if update else 'extract'}  backend={backend}  model={model}")
-    result = subprocess.run(cmd, cwd=repo_path)
-    if result.returncode != 0:
-        die(f"graphify exited with code {result.returncode}")
+    returncode = _run_with_heartbeat(cmd, cwd=repo_path, label="Graphify", env=env)
+    if returncode != 0:
+        die(f"graphify exited with code {returncode}")
+
+    if not update:
+        # As of graphifyy 0.9.x, `extract` deliberately stops after writing
+        # graph.json + the analysis sidecar — it no longer clusters, names
+        # communities, or writes GRAPH_REPORT.md itself (that split shipped
+        # without a matching major-version bump). `graphify update` still does
+        # this inline (via _rebuild_code), so only the extract path needs the
+        # follow-up call. Without this, GRAPH_REPORT.md never gets produced and
+        # _require_pipeline_artifacts() below dies with a confusing "missing
+        # artifact" error that looks unrelated to the dependency bump.
+        cluster_cmd = ["graphify", "cluster-only", ".", "--backend", backend, "--model", model]
+        if provider == "ollama":
+            cluster_cmd.extend(["--max-concurrency", "1"])
+        print(f"Graphify : cluster-only  backend={backend}  model={model}  (names communities, writes GRAPH_REPORT.md)")
+        cluster_returncode = _run_with_heartbeat(cluster_cmd, cwd=repo_path, label="Cluster", env=env)
+        if cluster_returncode != 0:
+            die(f"graphify cluster-only exited with code {cluster_returncode}")
 
 
 def _repo_state_file(repo_path: str) -> Path:
@@ -187,13 +253,7 @@ def _read_state(repo_path: str) -> dict[str, object] | None:
 
 
 def _is_generated_path(path: str) -> bool:
-    return (
-        path.startswith("graphify-out/")
-        or path.startswith(".claude/")
-        or path.startswith(".cursor/")
-        or path == "CLAUDE.md"
-        or path == ".github/copilot-instructions.md"
-    )
+    return path.startswith(GENERATED_DIR_PREFIXES) or path in GENERATED_FILES
 
 
 def _changed_files_since(repo_path: str, base_commit: str) -> set[str]:
@@ -376,14 +436,14 @@ def _build_layers(repo_path: str, *, provider: str, model: str, mode: str, ai_ta
 
 def _resolve_ai_target(cli_target: str | None = None) -> str:
     if cli_target:
-        if cli_target not in _AI_TARGETS:
-            die(f"invalid --ai-target '{cli_target}' (expected one of: {', '.join(_AI_TARGETS)})")
+        if cli_target not in AI_TARGETS:
+            die(f"invalid --ai-target '{cli_target}' (expected one of: {', '.join(AI_TARGETS)})")
         return cli_target
 
     env_target = (os.getenv("REPO_AI_TARGET") or "").strip().lower()
     if env_target:
-        if env_target not in _AI_TARGETS:
-            die(f"invalid REPO_AI_TARGET '{env_target}' (expected one of: {', '.join(_AI_TARGETS)})")
+        if env_target not in AI_TARGETS:
+            die(f"invalid REPO_AI_TARGET '{env_target}' (expected one of: {', '.join(AI_TARGETS)})")
         print(f"AI target: using REPO_AI_TARGET={env_target}")
         return env_target
 
@@ -517,66 +577,17 @@ def _wiki(
 
 
 _COMMANDS = ("graph", "check", "hook", "reindex", "query", "remember", "wiki")
-_LEGACY_MODE_FLAGS = {"--check": "check", "--install-hook": "hook", "--reindex": "reindex", "--wiki": "wiki"}
-_LEGACY_VALUE_FLAGS = {"--query": "query", "--remember": "remember"}
-_LEGACY_OPTION_RENAMES = {"--memory-kind": "--kind", "--memory-source": "--source"}
 
 
-def _translate_legacy_argv(argv: list[str]) -> list[str]:
-    """Map deprecated flag-style invocations (2repo . --wiki) onto subcommands (2repo wiki .)."""
+def _with_default_command(argv: list[str]) -> list[str]:
+    """Default to the 'graph' subcommand when none is given: '2repo .' → '2repo graph .'."""
     for arg in argv:
         if arg in ("-h", "--help"):
-            return argv  # top-level help
+            return argv                       # let argparse print help
         if arg.startswith("-"):
-            continue
-        if arg in _COMMANDS:
-            return argv  # already subcommand style
-        break  # first positional is the repo path → legacy style
-
-    command = "graph"
-    legacy_flag_used = False
-    positional_value: str | None = None
-    repo: str | None = None
-    options: list[str] = []
-
-    i = 0
-    while i < len(argv):
-        arg = argv[i]
-        flag, _, inline_value = arg.partition("=")
-        if arg in _LEGACY_MODE_FLAGS:
-            command = _LEGACY_MODE_FLAGS[arg]
-            legacy_flag_used = True
-        elif flag in _LEGACY_VALUE_FLAGS:
-            command = _LEGACY_VALUE_FLAGS[flag]
-            legacy_flag_used = True
-            if inline_value:
-                positional_value = inline_value
-            else:
-                i += 1
-                if i >= len(argv):
-                    die(f"{flag} requires a value")
-                positional_value = argv[i]
-        elif flag in _LEGACY_OPTION_RENAMES:
-            options.append(_LEGACY_OPTION_RENAMES[flag] + (f"={inline_value}" if inline_value else ""))
-        elif repo is None and not arg.startswith("-"):
-            repo = arg
-        else:
-            options.append(arg)
-        i += 1
-
-    if legacy_flag_used:
-        print(
-            f"Note     : legacy flag syntax is deprecated — use '2repo {command} <repo>' instead",
-            file=sys.stderr,
-        )
-
-    translated = [command]
-    if repo is not None:
-        translated.append(repo)
-    if positional_value is not None:
-        translated.append(positional_value)
-    translated.extend(options)
-    return translated
+            continue                          # skip leading options
+        return argv if arg in _COMMANDS else ["graph", *argv]
+    return ["graph", *argv]                   # empty / all-flags → still default to 'graph'
 
 
 def _add_repo_argument(parser: argparse.ArgumentParser) -> None:
@@ -593,8 +604,8 @@ def main() -> None:
     graph_parser = subparsers.add_parser("graph", help="Build the full pipeline: graph + execution + memory + index + AI injection")
     _add_repo_argument(graph_parser)
     graph_parser.add_argument("--update", action="store_true", help="Incremental graph update (re-extract changed files only)")
-    graph_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. smart, local, big)")
-    graph_parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
+    graph_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. fast, deep)")
+    graph_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
 
     check_parser = subparsers.add_parser("check", help="Check if the graph is stale based on changes since the last generation")
     _add_repo_argument(check_parser)
@@ -604,8 +615,8 @@ def main() -> None:
 
     reindex_parser = subparsers.add_parser("reindex", help="Rebuild semantic index, context, and selected AI injection from existing artifacts")
     _add_repo_argument(reindex_parser)
-    reindex_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. smart, local, big)")
-    reindex_parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
+    reindex_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. fast, deep)")
+    reindex_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
 
     query_parser = subparsers.add_parser("query", help="Run semantic retrieval over repo artifacts + repo memory")
     _add_repo_argument(query_parser)
@@ -617,8 +628,8 @@ def main() -> None:
     remember_parser.add_argument("text", metavar="TEXT", help="Memory entry to persist")
     remember_parser.add_argument("--kind", choices=["fact", "decision", "runbook"], default="fact", help="Memory type (default: fact)")
     remember_parser.add_argument("--source", default="manual", metavar="SOURCE", help="Memory source label (default: manual)")
-    remember_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. smart, local, big)")
-    remember_parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
+    remember_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. fast, deep)")
+    remember_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
 
     wiki_parser = subparsers.add_parser("wiki", help="Generate/update the living wiki (graphify-out/wiki/) incrementally via LLM")
     _add_repo_argument(wiki_parser)
@@ -626,10 +637,10 @@ def main() -> None:
     wiki_parser.add_argument("--force-all", action="store_true", help="Full rebuild, ignoring cache and baseline")
     wiki_parser.add_argument("--dry-run", action="store_true", help="List pages that would regenerate, without calling the LLM")
     wiki_parser.add_argument("--mirror-vault", action="store_true", help="Mirror wiki pages into the Obsidian vault (Projects/<repo-name>/Generated)")
-    wiki_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_WIKI (e.g. smart, local, big)")
-    wiki_parser.add_argument("--ai-target", choices=_AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
+    wiki_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_WIKI (e.g. fast, deep)")
+    wiki_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
 
-    args = parser.parse_args(_translate_legacy_argv(sys.argv[1:]))
+    args = parser.parse_args(_with_default_command(sys.argv[1:]))
 
     if not Path(args.repo).is_dir():
         die(f"not a directory: {args.repo}")
@@ -644,7 +655,7 @@ def main() -> None:
     if args.command == "wiki":
         if args.files and args.force_all:
             die("cannot combine explicit FILE targets with --force-all")
-        provider, model = _resolve_wiki_preset(args.preset)
+        provider, model = _resolve_preset(args.preset, env_keys=("REPO_PRESET_WIKI", "REPO_PRESET_GRAPH"))
         ai_target = "neutral" if args.dry_run else _resolve_ai_target(args.ai_target)
         print(f"Provider : {provider}  |  Model: {model}")
         if not args.dry_run:

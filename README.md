@@ -1,171 +1,40 @@
 # knowledge-hub
 
-You hit a problem. You type `2brain "what I just learned"`. A structured note appears in Obsidian. Done.
+Two commands that externalize memory. Local-first (Ollama), with optional paid Anthropic/OpenAI presets for heavier jobs.
 
 ```
-problem  →  2brain "topic"  →  note in Obsidian  →  never forget it again
+learn something   →  2brain "topic"          →  structured note in Obsidian
+open a codebase   →  2repo ~/Work/my-repo     →  AI-ready repo context
 ```
 
-Local-first. Runs great with Ollama, and can also use paid Anthropic/OpenAI presets when you want stronger models.
+Everything runs in containers — **no Python on the host.**
 
 ---
 
-## The idea
+## What the two commands do
 
-This system has two commands. Each one solves a specific memory problem.
+### `2brain` — your second brain
+Type `2brain "what I just figured out"` and an AI writes a clean, always-identically-structured note straight into your Obsidian vault. Capture from a topic, a file, a PDF, or audio/video; split broad topics into several notes; link notes together for Obsidian's graph view.
 
-### The problem: ADHD + code + knowledge = context loss
+→ **Full usage, every flag, examples: [docs/2brain.md](docs/2brain.md)**
 
-Working memory is limited. With ADHD it's even more limited. Two things keep happening:
+### `2repo` — repository intelligence
+Run `2repo ~/Work/my-repo` and it generates deterministic repo artifacts under `graphify-out/` (graph report, execution knowledge, durable memory, semantic index, canonical context) plus one editor bridge file for Claude, Copilot, or Cursor. Your AI assistant starts each session already knowing the repo instead of re-reading it. Also does semantic `query`, durable `remember`, staleness checks, and a living per-file `wiki`.
 
-- **You learn something** → don't write it down → forget it in a week → learn it again
-- **You open a repo** → spend 30 minutes reading files just to remember what it does → then your attention is gone
-
-This system externalizes both problems.
-
-## Commands at a glance
-
-Use the README for the big picture, then jump into the command docs when you need flags and edge cases.
-
-### `2brain` — capture and organize knowledge in Obsidian
-
-| Command | What it does |
-|---|---|
-| `2brain "topic"` | Generate one structured note in `vault/Inbox/` |
-| `2brain "topic" -f Guides` | Generate a note directly into a chosen vault folder |
-| `2brain --from-file ./notes.md` | Turn an existing file into a structured note |
-| `2brain "topic" --explore` | Split a broad topic into multiple focused notes |
-| `2brain --relink-all` | Re-scan notes and add `[[wikilinks]]` across the vault |
-
-### [`2brain`](docs/2brain.md) — second brain
-
-Type `2brain "what I just figured out"` and an AI writes a clean, structured note straight into your Obsidian vault. Zero friction, always the same format, searchable forever via Obsidian's graph view.
-
-→ Full usage and every flag: **[docs/2brain.md](docs/2brain.md)**
-
-### `2repo` — build AI-ready repo context
-
-| Command | What it does |
-|---|---|
-| `2repo <repo>` / `2repo graph <repo>` | Run the full graph/context pipeline |
-| `2repo graph <repo> --update` | Refresh the graph incrementally |
-| `2repo check <repo>` | Warn if the generated repo context is stale |
-| `2repo hook <repo>` | Install the post-commit stale warning hook |
-| `2repo query <repo> "question"` | Ask questions against generated repo artifacts |
-| `2repo remember <repo> "fact" --kind fact` | Store a durable repo memory entry |
-| `2repo reindex <repo>` | Rebuild retrieval/context from existing artifacts |
-| `2repo wiki <repo>` | Generate the living per-file wiki |
-
-### [`2repo`](docs/2repo.md) — repository intelligence for AI coding sessions
-
-Run `2repo ~/Work/my-repo` and it generates deterministic repo artifacts (`graphify-out/*`: graph report, execution knowledge, durable memory, semantic index, canonical context) plus one editor bridge file for Claude, Copilot, or Cursor. Your AI assistant starts every session already knowing the repo instead of burning context re-reading it.
-
-One subcommand per category, so no single command does too many different things:
-
-```bash
-2repo graph ~/Work/my-repo        # full pipeline (default: plain `2repo <repo>` does the same)
-2repo check .                     # is the graph stale?
-2repo hook .                      # install stale-warning post-commit hook
-2repo query . "how do I run tests?"
-2repo remember . "Use make test" --kind runbook
-2repo reindex .                   # rebuild index/context from existing artifacts
-2repo wiki .                      # living LLM wiki: per-file docs, updated incrementally
-```
-
-→ Full pipeline, generated artifacts, commands, and configuration: **[docs/2repo.md](docs/2repo.md)**
-
-### How the two fit together
-
-```
-YOUR BRAIN (ADHD)
-│
-│  learns something  →  2brain "what I learned"
-│                              │
-│                              └── vault/Inbox/what-i-learned.md
-│                                          │
-│                                   Obsidian graph view
-│                                   connects it to everything else
-│
-│  opens a repo      →  2repo ~/Work/my-repo
-│                              │
-│                              ├── graphify-out/
-│                              │    ├── GRAPH_REPORT.md
-│                              │    ├── EXECUTION.md
-│                              │    ├── REPO_MEMORY.md
-│                              │    ├── repo-index.json
-│                              │    ├── REPO_CONTEXT.md  ← AI assistant starts here
-│                              │    └── wiki/            ← living LLM wiki (2repo wiki)
-│                              │
-│                              ├── optional Obsidian mirror
-│                              │    └── vault/Projects/my-repo/
-│                              │         ├── Generated/       ← mirrored wiki pages from 2repo
-│                              │         └── Notes/           ← human-authored project notes
-│                              │
-│                              └── selected AI bridge file
-│                                   (.claude/KNOWLEDGE.md, CLAUDE.md,
-│                                   .github/copilot-instructions.md,
-│                                   or .cursor/rules/2repo.mdc)
-```
-
-**One rule:** every time you learn something or start working on a repo, run the command. Never decide what to write or how to format it. The AI does that. You just capture and move on.
-
----
-
-## What lives where
-
-This is important to understand once, then you never have to think about it again.
-
-```
-Your machine (Manjaro)
-│
-├── vault/                ← your notes live HERE, on your disk
-│     ├── Inbox/
-│     ├── Guides/
-│     ├── Troubleshooting/
-│     ├── Projects/
-│     ├── Reference/
-│
-├── Obsidian (desktop app) ← opens vault/ directly, no container involved
-│
-├── scripts/2brain.sh      ← thin bash wrapper, calls Docker (no Python on host)
-│
-└── Docker/Podman
-      ├── ollama container  ← AI engine, GPU passthrough
-      │     └── ~/.ollama/  ← model files, mounted from host so they survive rebuilds
-      └── scripts container ← runs main.py (Python + all deps, ephemeral per call)
-```
-
-**The vault is not inside any container.** Docker/Podman mount it read-write so the scripts container can write notes there. Obsidian opens the vault folder directly like any other folder. No Python needed on the host.
+→ **Full pipeline, subcommands, examples: [docs/2repo.md](docs/2repo.md)**
 
 ---
 
 ## Prerequisites
 
 - Docker or Podman
-- NVIDIA GPU + drivers
+- NVIDIA GPU + drivers ( `nvidia-smi` must work )
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) for GPU passthrough
 - Obsidian installed on the host
 
-No Python on the host. Everything runs in containers.
-
 ```bash
-nvidia-smi   # verify GPU is visible before anything else
+nvidia-smi   # verify the GPU is visible before anything else
 ```
-
----
-
-## Warning: shared model cache
-
-The Ollama container mounts `~/.ollama` directly from your host:
-
-```yaml
-- /home/${LINUX_USERNAME}/.ollama:/root/.ollama:rw
-```
-
-- Models are **shared across all Ollama containers** — pull once, available everywhere
-- Models **survive `docker compose down`** — they live on your disk, not in the container
-- **Do not delete `~/.ollama`** — models are 4–20 GB each
-- **Do not run two Ollama containers at the same time** pointing at the same folder — they conflict
 
 ---
 
@@ -179,31 +48,26 @@ cd ~/knowledge-hub
 cp .env-example .env
 ```
 
-Edit `.env` — at minimum set this:
+Edit `.env` and set at minimum:
 
 ```bash
-LINUX_USERNAME=yourname   # your Linux username, for ~/.ollama mount
+LINUX_USERNAME=yourname        # your Linux username (for the ~/.ollama mount)
+CONTAINER_ENGINE=podman        # or docker
 ```
 
-The default preset (`PRESET_LOCAL=ollama:qwen3:8b`) works out of the box once you pull the model in step 5. Presets are still the main model-routing mechanism for both commands: keep a local preset for cheap/simple work, add paid presets for heavy jobs, and point `2repo` at a stronger default if you want.
+The shipped `DEFAULT_PRESET=fast` runs on Ollama and works once you pull the model in step 5.
 
 ### 2. Register `2brain` and `2repo` as global commands
 
-Add this to your `nano ~/.zshrc` or `nano ~/.bashrc` (use `echo $SHELL` to know which one), and add this line in the end:
+Add to `~/.zshrc` or `~/.bashrc` (check with `echo $SHELL`):
 
 ```bash
-export KNOWLEDGE_HUB="$HOME/knowledge-hub"   # WARNING: adjust path if different
+export KNOWLEDGE_HUB="$HOME/knowledge-hub"   # adjust if you cloned elsewhere
 alias 2brain="$KNOWLEDGE_HUB/scripts/2brain.sh"
 alias 2repo="$KNOWLEDGE_HUB/scripts/2repo.sh"
 ```
 
-Then reload:
-
-```bash
-source ~/.zshrc
-```
-
-Now `2brain` and `2repo` work from any directory on this machine.
+Then reload: `source ~/.zshrc`. Now both commands work from any directory.
 
 ### 3. Build the container images
 
@@ -211,7 +75,7 @@ Now `2brain` and `2repo` work from any directory on this machine.
 docker compose build
 ```
 
-This installs all Python dependencies (anthropic, openai, faster-whisper, pypdf, etc.) inside the image. Nothing touches your host Python. Do this once; repeat only after updating the repo.
+Installs all Python deps (anthropic, openai, faster-whisper, pypdf, …) inside the image. Nothing touches host Python. Repeat only after updating the repo.
 
 ### 4. Start Ollama
 
@@ -219,99 +83,55 @@ This installs all Python dependencies (anthropic, openai, faster-whisper, pypdf,
 docker compose up -d
 ```
 
-First start pulls the Ollama image — takes a minute.
+### 5. Pull the model your local preset points at
 
-### 5. Pull a model
-
-```bash
-docker compose exec ollama ollama pull qwen3:8b
-```
-
-> 24 GB VRAM → `qwen3:14b` or `qwen3.6:27B` for better quality
-> 8 GB VRAM → stick with `qwen3:8b`
+`PRESET_FAST` in `.env` decides which model to pull. Match your VRAM:
 
 ```bash
-docker compose exec ollama ollama list   # verify
+docker compose exec ollama ollama pull qwen3:8b        # 8 GB VRAM
+docker compose exec ollama ollama pull qwen3.6:27B     # 24 GB VRAM (the shipped default)
+docker compose exec ollama ollama list                 # verify
 ```
 
 ### 6. Open the vault in Obsidian
 
 Obsidian → **Open folder as vault** → select `vault/` inside this repo.
 
-Done. From now on: type `2brain`, note appears in Obsidian. Type `2repo /path/to/repo` to generate repository intelligence for any codebase.
+Done. Type `2brain "topic"` and a note appears; type `2repo /path/to/repo` to generate repo intelligence.
 
 ---
 
-## Using a paid AI provider
+## Using a paid provider
 
-Add the API key to `.env`, define a preset for it, and either set it as your default or pass `--preset` when you want to use it. This applies to both `2brain` and `2repo`.
+Both commands route through two **presets** (`provider:model`): `fast` (local Ollama, the default) and `deep` (a cloud model for heavy jobs). Point `deep` at whatever paid model you like.
 
-### Presets still exist — and they are the intended way to mix local + paid models
-
-- `DEFAULT_PRESET` controls `2brain` (and any `2repo` path that does not override it)
-- `--preset <name>` lets you switch per command
-- `REPO_PRESET_GRAPH` lets `2repo graph`, `2repo reindex`, and `2repo remember` use a different default than `2brain`
-- `REPO_PRESET_WIKI` lets `2repo wiki` use its own default, falling back to `REPO_PRESET_GRAPH`
-- `REPO_AI_TARGET` optionally picks the default bridge target (`claude`, `copilot`, `cursor`, `neutral`)
-
-That means the workflow you described is supported: for example, keep `DEFAULT_PRESET=local` for everyday `2brain` usage, set `REPO_PRESET_GRAPH=smart` for heavier repo understanding, and optionally set `REPO_PRESET_WIKI=local` if you want the wiki refreshes to stay cheap.
-
-**Claude (Anthropic):**
-```bash
-# .env
-ANTHROPIC_API_KEY=sk-ant-...
-PRESET_SMART=anthropic:claude-sonnet-4-6
-
-# use once:
-2brain "topic" --preset smart
-
-# make it the default:
-DEFAULT_PRESET=smart
-```
-
-**OpenAI:**
 ```bash
 # .env
 OPENAI_API_KEY=sk-...
-PRESET_CHEAP=openai:gpt-4o-mini
+PRESET_DEEP=openai:gpt-4o        # or anthropic:claude-sonnet-4-6
 
-# use once:
-2brain "topic" --preset cheap
+2brain "topic" --preset deep     # use once
+DEFAULT_PRESET=deep              # or make it the default
 ```
 
----
-
-## Configuration reference
-
-All config lives in `.env`. Never edit `docker-compose.yml` directly.
-
-| Variable | Default | What it does |
-|---|---|---|
-| `LINUX_USERNAME` | — | Your Linux username (for `~/.ollama` mount) |
-| `CONTAINER_ENGINE` | `docker` | Container runtime: `docker` or `podman` |
-| `DEFAULT_PRESET` | `local` | Preset used when no `--preset` flag is passed |
-| `PRESET_<NAME>` | — | Define a preset: `provider:model` (e.g. `ollama:qwen3:8b`) |
-| `ANTHROPIC_API_KEY` | — | Required for any preset using the `anthropic` provider |
-| `OPENAI_API_KEY` | — | Required for any preset using the `openai` provider |
-| `OLLAMA_PORT` | `11434` | Port Ollama listens on |
-| `WHISPER_MODEL` | `base` | Whisper size: `tiny` `base` `small` `medium` `large-v3` |
-| `OLLAMA_KEEP_ALIVE` | `5m` | How long model stays loaded in VRAM when idle |
-| `OLLAMA_NUM_CTX` | `32000` | Context window (max tokens per request) |
-| `OLLAMA_NUM_THREAD` | `1` | CPU threads for Ollama (keep low to leave headroom) |
-| `OLLAMA_MEM_LIMIT` | `16g` | RAM limit for the Ollama container |
-| `REPO_PRESET_GRAPH` | `smart` | Default preset for `2repo graph`, `reindex`, and `remember` |
-| `REPO_PRESET_WIKI` | falls back to `REPO_PRESET_GRAPH` | Default preset for `2repo wiki` |
-| `REPO_AI_TARGET` | prompt / `neutral` in non-interactive runs | Default 2repo integration target |
-| `REPO_STALE_THRESHOLD` | `5` | Files-changed threshold for stale warnings |
-| `REPO_WIKI_AUTO` | — | Set to `1` before `2repo hook` to auto-run `2repo wiki .` after commits |
-
-More detail for both commands lives in **[docs/2brain.md](docs/2brain.md)** and **[docs/2repo.md](docs/2repo.md)**.
+`2repo` can use its own defaults via `REPO_PRESET_GRAPH` and `REPO_PRESET_WIKI`. See the docs for the full preset story.
 
 ---
 
-## Stopping and starting
+## ⚠️ Shared model cache
 
-Replace `docker` with `podman` if `CONTAINER_ENGINE=podman` in your `.env`.
+The Ollama container mounts `~/.ollama` from the host (`/home/${LINUX_USERNAME}/.ollama`):
+
+- Models are **shared across all Ollama containers** — pull once, available everywhere.
+- Models **survive `docker compose down`** — they live on your disk.
+- **Do not delete `~/.ollama`** — models are 4–20 GB each.
+- **Do not run two Ollama containers** against the same folder — they conflict.
+
+---
+
+## Everyday operation
+
+Replace `docker` with `podman` if `CONTAINER_ENGINE=podman`.
 
 ```bash
 docker compose up -d       # start Ollama
@@ -319,33 +139,14 @@ docker compose down        # stop (models stay downloaded)
 docker compose restart     # restart
 ```
 
----
+**Troubleshooting**
 
-## Troubleshooting
+| Symptom | Fix |
+|---|---|
+| `2brain: command not found` | `source ~/.zshrc` (reload after adding the alias) |
+| Cannot reach Ollama | `docker compose ps` · `docker compose logs ollama` |
+| GPU not used | `nvidia-smi` · `docker compose exec ollama nvidia-smi` |
+| Model not found | `docker compose exec ollama ollama pull qwen3:8b` |
+| Note not visible in Obsidian | The command prints the path; press the vault refresh button |
 
-**`2brain` command not found**
-```bash
-source ~/.zshrc   # reload shell after adding the alias
-```
-
-**Cannot reach Ollama**
-```bash
-docker compose ps           # check it's running
-docker compose logs ollama  # check for errors
-```
-
-**GPU not being used**
-```bash
-nvidia-smi                           # host
-docker compose exec ollama nvidia-smi  # inside container
-```
-
-**Model not found**
-```bash
-docker compose exec ollama ollama list
-docker compose exec ollama ollama pull qwen3:8b
-```
-
-**Note created but not visible in Obsidian**
-
-The command prints the full path. If Obsidian doesn't pick it up automatically, press the vault refresh button inside Obsidian.
+Full configuration reference lives in the docs: **[docs/2brain.md](docs/2brain.md)** · **[docs/2repo.md](docs/2repo.md)**.

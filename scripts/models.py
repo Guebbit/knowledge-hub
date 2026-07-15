@@ -13,7 +13,8 @@ Models are stored in MODELS_PATH/whisper/ (bind-mounted from ./models on the hos
 import shutil
 import sys
 
-from config import MODELS_PATH
+from shared.config import MODELS_PATH
+from shared.utils import die
 
 WHISPER_SIZES = {"tiny", "base", "small", "medium", "large-v2", "large-v3"}
 
@@ -22,14 +23,14 @@ def cmd_pull(target: str) -> None:
     """Download/cache a supported model target (currently whisper/<size>)."""
     kind, _, size = target.partition("/")
     if kind != "whisper":
-        _die(f"Unknown model type '{kind}'. Only 'whisper' is supported.")
+        die(f"Unknown model type '{kind}'. Only 'whisper' is supported.")
     if size not in WHISPER_SIZES:
-        _die(f"Unknown Whisper size '{size}'. Valid: {', '.join(sorted(WHISPER_SIZES))}")
+        die(f"Unknown Whisper size '{size}'. Valid: {', '.join(sorted(WHISPER_SIZES))}")
 
     try:
         from faster_whisper import WhisperModel
     except ImportError:
-        _die("faster-whisper not installed — run: pip install faster-whisper")
+        die("faster-whisper not installed — run: pip install faster-whisper")
 
     whisper_dir = MODELS_PATH / "whisper"
     whisper_dir.mkdir(parents=True, exist_ok=True)  # create the directory tree if it doesn't exist yet
@@ -63,21 +64,15 @@ def cmd_delete(target: str) -> None:
     """Delete one cached model directory (whisper/<size>)."""
     kind, _, size = target.partition("/")
     if kind != "whisper":
-        _die(f"Unknown model type '{kind}'.")
+        die(f"Unknown model type '{kind}'.")
 
     model_dir = MODELS_PATH / "whisper" / size
     if not model_dir.exists():
-        _die(f"whisper/{size} not found in {MODELS_PATH / 'whisper'}")
+        die(f"whisper/{size} not found in {MODELS_PATH / 'whisper'}")
 
     # shutil.rmtree() removes the directory and all its contents recursively (like rm -rf)
     shutil.rmtree(model_dir)
     print(f"Deleted whisper/{size}.")
-
-
-def _die(msg: str) -> None:
-    """Print an error message and terminate with non-zero exit status."""
-    print(f"Error: {msg}", file=sys.stderr)
-    sys.exit(1)
 
 
 def _usage() -> None:
@@ -94,13 +89,13 @@ if __name__ == "__main__":
     command = args[0]
     if command == "pull":
         if len(args) < 2:
-            _die("Usage: models.py pull whisper/<size>")
+            die("Usage: models.py pull whisper/<size>")
         cmd_pull(args[1])
     elif command == "list":
         cmd_list()
     elif command == "delete":
         if len(args) < 2:
-            _die("Usage: models.py delete whisper/<size>")
+            die("Usage: models.py delete whisper/<size>")
         cmd_delete(args[1])
     else:
-        _die(f"Unknown command '{command}'. Valid: pull | list | delete")
+        die(f"Unknown command '{command}'. Valid: pull | list | delete")

@@ -10,9 +10,10 @@ entry to _READERS at the bottom of this file. read_source() never needs to chang
 import os
 import re
 from pathlib import Path
+from typing import Callable
 
-from config import AUDIO_EXTENSIONS, MODELS_PATH
-from utils import die
+from shared.config import AUDIO_EXTENSIONS, MODELS_PATH
+from shared.utils import die
 
 
 def read_source(path: Path) -> str:
@@ -82,7 +83,7 @@ def _read_html(path: Path) -> str:
 # Dispatch table — maps file extensions to their reader functions.
 # Defined here (after the functions) so all names are already in scope.
 # Add a new type by adding one entry here + a _read_X function above.
-_READERS: dict[str, object] = {
+_READERS: dict[str, Callable[[Path], str]] = {
     # Expand AUDIO_EXTENSIONS set into individual entries, all pointing to _read_audio
     **{ext: _read_audio for ext in AUDIO_EXTENSIONS},
     ".pdf":  _read_pdf,
