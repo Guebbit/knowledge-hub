@@ -1,0 +1,68 @@
+# Windows / CPU-only compose for knowledge-hub (2repo).
+#
+# STANDALONE — this file does NOT merge with docker-compose.yml. Use it directly:
+#   docker compose -f docker-compose.windows.yml <cmd>
+# or via the scripts/2repo.ps1 wrapper.
+#
+# Why a separate file instead of an override: docker compose *appends* list fields
+# (devices, volumes) across files, so a GPU device request or a Linux bind mount in
+# the base compose can't be removed by an override. A standalone file gives a clean
+# CPU/Windows definition.
+#
+# Differences vs the Linux docker-compose.yml:
+#   - No NVIDIA GPU device request and no nvidia-smi healthcheck (this box has no GPU).
+#   - Ollama models live in a Docker named volume, not /home/${LINUX_USERNAME}/.ollama.
+#   - No ~/.claude or ~/.models host mounts (claude-code preset / Whisper unused here).
+# Everything is still driven by the PRESET_* / REPO_PRESET_* vars in .env.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    stop_signal: SIGKILL
+    stop_grace_period: 5s
+    ports:
+      - '${OLLAMA_PORT:-11434}:11434'
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
+    volumes:
+      # Named volume — models survive `down` and image rebuilds, no host path needed.
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    mem_limit: ${OLLAMA_MEM_LIMIT:-24g}
+    shm_size: ${OLLAMA_SHM_SIZE:-8g}
+    cpus: '${OLLAMA_CPUS:-8.0}'
+    healthcheck:
+      test: ['CMD', 'ollama', '--version']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  scripts:
+    build:
+      context: .
+      dockerfile: Dockerfile.scripts
+    # No persistent container — invoked via `docker compose run --rm scripts ...`
+    # (the 2repo.ps1 wrapper does this and mounts the target repo at /target-repo).
+    volumes:
+      - ./vault:/vault:rw
+      - ./scripts:/scripts:ro
+      # Custom graphify provider forcing Ollama JSON mode so small local models
+      # can't return prose instead of the requested graph JSON.
+      - ./graphify/providers.json:/root/.graphify/providers.json:ro
+    # Load the entire .env so ANY preset you add (PRESET_*) is visible in the
+    # container automatically — you only ever edit .env, never this file.
+    env_file:
+      - .env
+    environment:
+      # Fixed container-internal values (override anything from .env).
+      VAULT_PATH: /vault
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-local}
+    depends_on:
+      - ollama
+
+volumes:
+  ollama-models:
+    driver: local
