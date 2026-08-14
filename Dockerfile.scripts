@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg nodejs npm \
+    && apt-get install -y --no-install-recommends ffmpeg nodejs npm git \
     && rm -rf /var/lib/apt/lists/*
 
 # Claude Code CLI — backs graphify's "claude-cli" backend (REPO_PRESET_GRAPH
@@ -20,3 +20,23 @@ RUN pip install --no-cache-dir \
     beautifulsoup4 \
     pathspec \
     graphifyy==0.9.13
+
+# CodeBoarding — backs the `2repo arch` layer (component docs + Mermaid diagrams).
+# Never phone home: 2repo is local-first, so disable CodeBoarding telemetry for
+# every invocation, including the build-time setup below (repo/arch.py also sets
+# these per-subprocess as defence in depth).
+ENV CODEBOARDING_TELEMETRY=false \
+    DO_NOT_TRACK=1
+# Installed in an isolated venv so its pinned dependencies can't conflict with the
+# scripts' own (openai/anthropic/requests/graphify); 2repo only ever calls the
+# `codeboarding` CLI as a subprocess. `codeboarding-setup` bakes the language-server
+# binaries into ~/.codeboarding/servers at build time so no per-run download is
+# needed (2repo invokes ephemeral `run --rm` containers). Node.js above satisfies
+# the Python/TS/JS/PHP language servers. This version renders Markdown via the
+# render_docs() Python API (repo/arch.py drives it in this venv), not a CLI flag.
+RUN python -m venv /opt/codeboarding \
+    && /opt/codeboarding/bin/pip install --no-cache-dir \
+        codeboarding --extra-index-url https://pip.codeboarding.org/simple/ \
+    && ln -s /opt/codeboarding/bin/codeboarding /usr/local/bin/codeboarding \
+    && ln -s /opt/codeboarding/bin/codeboarding-setup /usr/local/bin/codeboarding-setup \
+    && codeboarding-setup

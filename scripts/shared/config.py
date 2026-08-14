@@ -81,5 +81,10 @@ AUDIO_EXTENSIONS = {".mp3", ".mp4", ".wav", ".m4a", ".webm", ".ogg", ".flac"}
 # generated files derives from these two constants instead of hardcoding its own
 # copy: the git staleness pathspecs, _is_generated_path(), and the wiki's
 # documentable-file filter. Add a generated location once, here.
-GENERATED_DIR_PREFIXES = ("graphify-out/", ".claude/", ".cursor/")
+#
+# .codeboarding/ is CodeBoarding's native working/baseline dir written by
+# `2repo arch` (analysis.json + rendered Markdown). Its indexed copy lives under
+# graphify-out/arch/; the .codeboarding/ dir itself is machine-owned and must be
+# ignored by staleness checks and never documented by the wiki.
+GENERATED_DIR_PREFIXES = ("graphify-out/", ".claude/", ".cursor/", ".codeboarding/")
 GENERATED_FILES = ("CLAUDE.md", ".github/copilot-instructions.md")

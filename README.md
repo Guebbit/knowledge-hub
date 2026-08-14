@@ -19,7 +19,7 @@ Type `2brain "what I just figured out"` and an AI writes a clean, always-identic
 → **Full usage, every flag, examples: [docs/2brain.md](docs/2brain.md)**
 
 ### `2repo` — repository intelligence
-Run `2repo ~/Work/my-repo` and it generates deterministic repo artifacts under `graphify-out/` (graph report, execution knowledge, durable memory, semantic index, canonical context) plus one editor bridge file for Claude, Copilot, or Cursor. Your AI assistant starts each session already knowing the repo instead of re-reading it. Also does semantic `query`, durable `remember`, staleness checks, and a living per-file `wiki`.
+Run `2repo ~/Work/my-repo` and it generates deterministic repo artifacts under `graphify-out/` (graph report, execution knowledge, durable memory, semantic index, canonical context) plus one editor bridge file for Claude, Copilot, or Cursor. Your AI assistant starts each session already knowing the repo instead of re-reading it. Also does semantic `query`, durable `remember`, staleness checks, a living per-file `wiki`, and an `arch` layer (component docs + Mermaid diagrams).
 
 → **Full pipeline, subcommands, examples: [docs/2repo.md](docs/2repo.md)**
 

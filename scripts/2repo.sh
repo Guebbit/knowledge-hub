@@ -18,6 +18,9 @@
 #   2repo wiki . --force-all             # full wiki rebuild
 #   2repo wiki . --dry-run               # preview which pages would regenerate
 #   2repo wiki . --mirror-vault          # also mirror wiki pages into vault/Projects/<repo>/Generated
+#   2repo arch .                         # architecture layer: component pages + Mermaid diagrams (CodeBoarding)
+#   2repo arch . --force-all             # full re-analysis (ignore CodeBoarding incremental baseline)
+#   2repo arch . --dry-run               # report full-vs-incremental without calling the LLM
 #
 # Legacy flag syntax (2repo . --wiki, --check, --query, ...) still works but is deprecated.
 #
@@ -32,7 +35,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 ENGINE="${CONTAINER_ENGINE:-docker}"
 
-COMMANDS=" graph check hook reindex query remember wiki "
+COMMANDS=" graph check hook reindex query remember wiki arch "
 
 # Scan args: find the first argument that is a real directory — that's the repo.
 # Replace it with /target-repo in the container args list. All other args pass through.

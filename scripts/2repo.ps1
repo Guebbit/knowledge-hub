@@ -15,6 +15,7 @@
 #   .\scripts\2repo.ps1 graph  C:\path\to\repo --preset deep     # cloud (needs OPENAI_API_KEY)
 #   .\scripts\2repo.ps1 graph  C:\path\to\repo --ai-target copilot
 #   .\scripts\2repo.ps1 wiki   C:\path\to\repo
+#   .\scripts\2repo.ps1 arch   C:\path\to\repo                    # architecture pages + Mermaid diagrams
 #   .\scripts\2repo.ps1 query  C:\path\to\repo "how do I run tests?"
 #   .\scripts\2repo.ps1        C:\path\to\repo                    # shorthand for `graph`
 #
@@ -32,7 +33,7 @@ if (-not (Test-Path -LiteralPath $Compose)) {
     exit 1
 }
 
-$commands = @('graph', 'check', 'hook', 'reindex', 'query', 'remember', 'wiki')
+$commands = @('graph', 'check', 'hook', 'reindex', 'query', 'remember', 'wiki', 'arch')
 
 # Scan args: the first argument that is a real directory is the target repo; it is
 # replaced with /target-repo (the in-container mount point). A leading subcommand

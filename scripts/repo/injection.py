@@ -173,6 +173,13 @@ def write_repo_context(
             "- `graphify-out/wiki/` — living wiki: per-file documentation pages "
             "plus `OVERVIEW.md` (generated — do not edit by hand; regenerate with `2repo wiki <repo-path>`)"
         )
+    arch_dir = repo / "graphify-out" / "arch"
+    if arch_dir.is_dir() and any(arch_dir.glob("*.md")):
+        lines.append(
+            "- `graphify-out/arch/` — architecture layer: component/topic pages with "
+            "Mermaid diagrams plus `overview.md` (generated — do not edit by hand; "
+            "regenerate with `2repo arch <repo-path>`)"
+        )
     lines.append("")
     lines.append("## Index Metadata")
     lines.append(f"- Provider: `{provider}`")

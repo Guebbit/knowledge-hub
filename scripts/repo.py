@@ -16,6 +16,9 @@ Usage (via 2repo.sh alias) — one subcommand per category:
   2repo wiki . --force-all               # full wiki rebuild (ignore cache and baseline)
   2repo wiki . --dry-run                 # list pages that would be regenerated (no LLM calls)
   2repo wiki . --mirror-vault            # also mirror wiki pages into vault/Projects/<repo>/Generated
+  2repo arch .                           # architecture layer: component pages + Mermaid diagrams (CodeBoarding)
+  2repo arch . --force-all               # full re-analysis (ignore CodeBoarding incremental baseline)
+  2repo arch . --dry-run                 # report full-vs-incremental without calling the LLM
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ from repo import index as repo_index
 from repo import injection as repo_injection
 from repo import memory as repo_memory
 from repo import wiki as repo_wiki
+from repo import arch as repo_arch
 from repo.execution import generate as execution_generate
 from repo.injection import AI_TARGETS
 from shared import config
@@ -576,7 +580,57 @@ def _wiki(
     return 0
 
 
-_COMMANDS = ("graph", "check", "hook", "reindex", "query", "remember", "wiki")
+def _arch(
+    repo_path: str,
+    *,
+    provider: str,
+    model: str,
+    ai_target: str,
+    force_all: bool,
+    dry_run: bool,
+    mirror_vault: bool,
+) -> int:
+    """Generate/update the architecture layer, then refresh index + context so pages are retrievable."""
+    # CodeBoarding runs as its own subprocess with an explicit provider env, so it
+    # does not read config.PROVIDER/MODEL — but keep them aligned for the follow-up
+    # _build_layers call (which records provider/model in runtime metadata).
+    config.PROVIDER = provider
+    config.MODEL = model
+
+    try:
+        summary = repo_arch.generate(
+            repo_path,
+            provider=provider,
+            model=model,
+            force_all=force_all,
+            dry_run=dry_run,
+        )
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        die(str(exc))
+
+    if dry_run:
+        return 0
+
+    # Fold the architecture pages into the semantic index and canonical context.
+    # State is intentionally NOT rewritten: the graph baseline must only move when
+    # graphify itself runs, otherwise --check would report a stale graph as fresh
+    # (same rule as the wiki layer).
+    _build_layers(repo_path, provider=provider, model=model, mode="arch", ai_target=ai_target)
+
+    if mirror_vault:
+        try:
+            destination = repo_arch.mirror_to_vault(repo_path, config.VAULT_PATH)
+        except FileNotFoundError as exc:
+            die(str(exc))
+        print(f"Arch     : mirrored to {destination}")
+
+    written = summary.get("written") or []
+    removed = summary.get("removed") or []
+    print(f"Arch     : done ({len(written)} written, {len(removed)} pruned, {summary.get('page_count')} pages total)")
+    return 0
+
+
+_COMMANDS = ("graph", "check", "hook", "reindex", "query", "remember", "wiki", "arch")
 
 
 def _with_default_command(argv: list[str]) -> list[str]:
@@ -640,6 +694,14 @@ def main() -> None:
     wiki_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_WIKI (e.g. fast, deep)")
     wiki_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
 
+    arch_parser = subparsers.add_parser("arch", help="Generate/update the architecture layer (graphify-out/arch/): component pages + Mermaid diagrams via CodeBoarding")
+    _add_repo_argument(arch_parser)
+    arch_parser.add_argument("--force-all", action="store_true", help="Full re-analysis, ignoring the CodeBoarding incremental baseline")
+    arch_parser.add_argument("--dry-run", action="store_true", help="Report whether a full or incremental run would happen, without calling the LLM")
+    arch_parser.add_argument("--mirror-vault", action="store_true", help="Mirror architecture pages into the Obsidian vault (Projects/<repo-name>/Generated/Architecture)")
+    arch_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_ARCH (e.g. fast, deep)")
+    arch_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
+
     args = parser.parse_args(_with_default_command(sys.argv[1:]))
 
     if not Path(args.repo).is_dir():
@@ -667,6 +729,26 @@ def main() -> None:
                 model=model,
                 ai_target=ai_target,
                 target_files=args.files,
+                force_all=args.force_all,
+                dry_run=args.dry_run,
+                mirror_vault=args.mirror_vault,
+            )
+        )
+
+    if args.command == "arch":
+        provider, model = _resolve_preset(
+            args.preset, env_keys=("REPO_PRESET_ARCH", "REPO_PRESET_WIKI", "REPO_PRESET_GRAPH")
+        )
+        ai_target = "neutral" if args.dry_run else _resolve_ai_target(args.ai_target)
+        print(f"Provider : {provider}  |  Model: {model}")
+        if not args.dry_run:
+            print(f"AI target: {ai_target}")
+        sys.exit(
+            _arch(
+                args.repo,
+                provider=provider,
+                model=model,
+                ai_target=ai_target,
                 force_all=args.force_all,
                 dry_run=args.dry_run,
                 mirror_vault=args.mirror_vault,
