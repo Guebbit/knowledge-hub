@@ -1,14 +1,24 @@
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg nodejs npm git \
+    && apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# Claude Code CLI — backs graphify's "claude-cli" backend (REPO_PRESET_GRAPH
-# using a claude-code:* preset). Auth comes from the host's ~/.claude
-# credentials, bind-mounted read-only at runtime (see docker-compose.yml);
-# no ANTHROPIC_API_KEY needed, uses the Claude Code subscription instead.
-RUN npm install -g @anthropic-ai/claude-code
+# Node.js 22 (NodeSource). Debian's own nodejs is too old for the GitHub Copilot
+# CLI (needs Node 22+); this single Node also serves @anthropic-ai/claude-code and
+# CodeBoarding's language servers. NodeSource's package bundles npm.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Subscription-backed CLIs — both let a preset use an existing subscription login
+# instead of a metered API key:
+#   • @anthropic-ai/claude-code → backs graphify's "claude-cli" backend
+#     (a claude-code:* preset). Auth = host ~/.claude bind-mounted read-only.
+#   • @github/copilot           → backs the "copilot-cli" provider (a copilot-cli:*
+#     preset for wiki/query/2brain, i.e. the call_llm path). Auth = a fine-grained
+#     PAT with "Copilot Requests", passed as COPILOT_GITHUB_TOKEN (see .env-example).
+RUN npm install -g @anthropic-ai/claude-code @github/copilot
 
 RUN pip install --no-cache-dir \
     requests \

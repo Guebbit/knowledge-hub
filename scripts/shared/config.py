@@ -60,6 +60,11 @@ OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "600"))
 # Seconds to wait for `claude -p` to return. Same default as OLLAMA_TIMEOUT.
 CLAUDE_CODE_TIMEOUT = int(os.getenv("CLAUDE_CODE_TIMEOUT", "600"))
 
+# --- GitHub Copilot CLI -------------------------------------------------------
+
+# Seconds to wait for `copilot -p` to return. Same default as OLLAMA_TIMEOUT.
+COPILOT_CLI_TIMEOUT = int(os.getenv("COPILOT_CLI_TIMEOUT", "600"))
+
 # --- Vault ------------------------------------------------------------------
 
 VAULT_PATH = Path(

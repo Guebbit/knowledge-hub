@@ -383,10 +383,11 @@ All config lives in `.env` (copied from `.env-example`). Never edit `docker-comp
 | `CONTAINER_ENGINE` | `podman` | Container runtime: `docker` or `podman` |
 | `MODELS_PATH` | `~/.models` | Host dir for non-Ollama model files (e.g. Whisper) |
 | `DEFAULT_PRESET` | `fast` | Preset used when no `--preset` flag is passed |
-| `PRESET_<NAME>` | — | Define a preset: `provider:model` (e.g. `ollama:qwen3:8b`, `openai:gpt-4o`) |
+| `PRESET_<NAME>` | — | Define a preset: `provider:model`. Providers: `ollama`, `anthropic`, `openai`, `claude-code`, `copilot-cli` (e.g. `ollama:qwen3:8b`, `openai:gpt-4o`, `copilot-cli:auto`) |
 | `ANTHROPIC_API_KEY` | — | Required for any preset using the `anthropic` provider |
 | `OPENAI_API_KEY` | — | Required for any `openai` preset (also works with a GitHub Models PAT) |
 | `OPENAI_BASE_URL` | — | Override the OpenAI endpoint (e.g. GitHub Models / Azure) |
+| `COPILOT_GITHUB_TOKEN` | — | Required for any `copilot-cli` preset — a fine-grained PAT (`github_pat_...`) with the account-level "Copilot Requests" permission |
 | `OLLAMA_PORT` | `11434` | Port Ollama listens on |
 | `WHISPER_MODEL` | `base` | Whisper size: `tiny` `base` `small` `medium` `large-v3` |
 | `OLLAMA_KEEP_ALIVE` | `5m` | How long a model stays loaded in VRAM when idle |
@@ -408,6 +409,19 @@ PRESET_DEEP=openai:gpt-4o
 - `DEFAULT_PRESET` is used when you pass no `--preset`.
 - `--preset <name>` overrides it for a single command.
 - Keep `fast` for everyday capture; reach for `deep` on dense or important notes.
+
+**Subscription-backed CLI providers (no metered API key):**
+
+- `claude-code:<model>` shells out to the `claude` CLI and uses your Claude Code login.
+- `copilot-cli:<model>` shells out to the `copilot` CLI and uses your GitHub Copilot
+  subscription. Set `COPILOT_GITHUB_TOKEN` to a fine-grained PAT with the "Copilot
+  Requests" permission. Use `auto` to let Copilot pick the model. Each call spends
+  from the Copilot plan's request allowance (premium requests for premium models),
+  so it is not literally free — but consumes no paid API credit.
+
+Both are CLI-only: they back `2brain`, `2repo wiki` and `2repo query` (the `call_llm`
+path) but **not** `2repo graph` or `2repo arch`, which drive external libraries
+(graphify / CodeBoarding) that talk to provider APIs directly and have no CLI backend.
 
 ---
 

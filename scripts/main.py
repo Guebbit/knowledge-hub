@@ -27,7 +27,7 @@ Usage:
   python main.py --relink-all -f Reference         # limit to one folder
 
 Supported file types: .md .txt .pdf .html .mp3 .mp4 .wav .m4a .webm .ogg .flac
-Supported providers:  ollama | anthropic | openai | claude-code  (set via presets in .env)
+Supported providers:  ollama | anthropic | openai | claude-code | copilot-cli  (set via presets in .env)
 """
 import argparse
 from datetime import date

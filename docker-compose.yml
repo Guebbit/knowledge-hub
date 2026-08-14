@@ -73,11 +73,17 @@ services:
       DEFAULT_PRESET: ${DEFAULT_PRESET:-fast}
       PRESET_FAST: ${PRESET_FAST:-ollama:qwen3:8b}
       PRESET_DEEP: ${PRESET_DEEP:-openai:gpt-4o}
+      PRESET_COPILOT: ${PRESET_COPILOT:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      # GitHub Copilot CLI auth (backs a copilot-cli:* preset) — a fine-grained
+      # PAT with the account-level "Copilot Requests" permission. Draws on the
+      # Copilot plan's request allowance instead of a metered API key.
+      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
+      COPILOT_CLI_TIMEOUT: ${COPILOT_CLI_TIMEOUT:-600}
       WHISPER_MODEL: ${WHISPER_MODEL:-base}
       REPO_PRESET_GRAPH: ${REPO_PRESET_GRAPH:-deep}
       REPO_PRESET_WIKI: ${REPO_PRESET_WIKI:-}

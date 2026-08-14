@@ -14,7 +14,13 @@ from typing import Callable
 
 # Import the module object so runtime mutations to config.PROVIDER / config.MODEL are visible.
 from shared import config
-from shared.config import OLLAMA_URL, OLLAMA_NUM_CTX, OLLAMA_TIMEOUT, CLAUDE_CODE_TIMEOUT  # these never change at runtime
+from shared.config import (  # these never change at runtime
+    OLLAMA_URL,
+    OLLAMA_NUM_CTX,
+    OLLAMA_TIMEOUT,
+    CLAUDE_CODE_TIMEOUT,
+    COPILOT_CLI_TIMEOUT,
+)
 from shared.utils import die
 
 # Hard cap on response length in tokens, shared by every provider so behavior is
@@ -175,6 +181,79 @@ def _call_claude_code(prompt: str) -> str:
         die("claude CLI returned unexpected output — could not parse 'result' field")
 
 
+# Token env vars the Copilot CLI reads, in the order it checks them. A fine-grained
+# PAT (github_pat_...) with the account-level "Copilot Requests" permission is
+# required — classic ghp_ tokens are NOT accepted.
+_COPILOT_TOKEN_ENV_KEYS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+
+
+def _call_copilot_cli(prompt: str) -> str:
+    """Route through the `copilot` CLI instead of a paid API key.
+
+    Uses the GitHub Copilot subscription behind the token in COPILOT_GITHUB_TOKEN
+    (or GH_TOKEN / GITHUB_TOKEN) — no per-token API billing, but each call draws
+    on the plan's request allowance (premium requests for premium models).
+
+    Security: 2repo feeds untrusted repository content into prompts, so this must
+    stay a hermetic text-only completion. We whitelist a non-existent tool via
+    --available-tools, which disables every real tool (shell/write/web-fetch/MCP),
+    run in an isolated temp cwd, and disable built-in MCPs and repo custom
+    instructions. With no tools exposed there is nothing to approve, so the
+    non-interactive call cannot hang waiting for a confirmation prompt.
+    """
+    import re
+    import subprocess
+    import tempfile
+
+    token = next((os.getenv(k) for k in _COPILOT_TOKEN_ENV_KEYS if os.getenv(k)), None)
+    if not token:
+        reason = (
+            "No Copilot token found — set COPILOT_GITHUB_TOKEN in .env to a "
+            "fine-grained PAT (github_pat_...) with the account-level "
+            '"Copilot Requests" permission. Classic ghp_ tokens are not accepted.'
+        )
+        if _fallback_to_local(reason):
+            return _call_ollama(prompt)
+        die(reason)
+
+    cmd = [
+        "copilot", "-p", prompt,
+        "--model", config.MODEL,          # e.g. "auto" lets Copilot pick a model
+        "--silent",                       # print only the agent response (for scripting)
+        "--no-color",
+        "--log-level", "none",
+        "--available-tools", "none",      # whitelist a bogus tool → disables all real tools
+        "--disable-builtin-mcps",         # no GitHub MCP round-trips
+        "--no-custom-instructions",       # ignore the target repo's AGENTS.md / CLAUDE.md
+    ]
+
+    try:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=COPILOT_CLI_TIMEOUT,
+            cwd=tempfile.gettempdir(),    # never let it scan the target repo
+        )
+    except FileNotFoundError:
+        die("copilot CLI not found on PATH — install it: npm install -g @github/copilot (needs Node 22+)")
+    except subprocess.TimeoutExpired:
+        die(f"copilot CLI timed out after {COPILOT_CLI_TIMEOUT}s")
+
+    if res.returncode != 0:
+        stderr = res.stderr.strip()
+        # An expired/missing/wrong-scope token surfaces as an auth error — offer fallback.
+        if "authentic" in stderr.lower() or "no authentication" in stderr.lower():
+            if _fallback_to_local(f"copilot CLI authentication failed: {stderr}"):
+                return _call_ollama(prompt)
+        die(f"copilot CLI exited {res.returncode}: {stderr}")
+
+    text = re.sub(r"\x1b\[[0-9;]*m", "", res.stdout).strip()
+    if not text:
+        die("copilot CLI returned an empty response")
+    return text
+
+
 # Dispatch table — maps provider names to their adapter functions.
 # Defined here (after the functions) so all names are already in scope.
 # Add a new provider by adding one line here + a _call_X function above.
@@ -183,4 +262,5 @@ _ADAPTERS: dict[str, Callable[[str], str]] = {
     "anthropic":   _call_anthropic,
     "openai":      _call_openai,
     "claude-code": _call_claude_code,
+    "copilot-cli": _call_copilot_cli,
 }
