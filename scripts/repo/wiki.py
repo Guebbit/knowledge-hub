@@ -16,10 +16,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
-import subprocess
 from pathlib import Path
 
+from repo.vault import mirror_markdown_tree, repo_display_name
 from shared.config import GENERATED_DIR_PREFIXES
 from shared.providers import call_llm
 from shared.utils import now_iso
@@ -346,38 +345,12 @@ def generate(
     }
 
 
-def _repo_display_name(repo_path: str) -> str:
-    """Best-effort repository name: git origin basename, else directory name."""
-    result = subprocess.run(
-        ["git", "remote", "get-url", "origin"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0 and result.stdout.strip():
-        name = result.stdout.strip().rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
-        if name:
-            return name
-    return Path(repo_path).resolve().name
-
-
 def mirror_to_vault(repo_path: str, vault_path: Path) -> Path:
     """Mirror graphify-out/wiki into the Obsidian vault under Projects/<repo-name>/Generated/."""
     source = wiki_dir(repo_path)
     if not source.exists():
         raise FileNotFoundError(f"wiki not generated yet: {source}")
-    project_root = vault_path / "Projects" / _repo_display_name(repo_path)
-    destination = project_root / "Generated"
-    notes_dir = project_root / "Notes"
-    destination.mkdir(parents=True, exist_ok=True)
-    notes_dir.mkdir(parents=True, exist_ok=True)
-
-    source_markdown = list(source.glob("*.md"))
-    source_pages = {page.name for page in source_markdown}
-    existing_pages = {page.name: page for page in destination.glob("*.md")}
-    for page in source_markdown:
-        shutil.copy2(page, destination / page.name)
-    for name, page in existing_pages.items():
-        if name not in source_pages:
-            page.unlink()
-    return destination
+    project_root = vault_path / "Projects" / repo_display_name(repo_path)
+    # Ensure a sibling Notes/ dir exists for hand-written notes alongside the mirror.
+    (project_root / "Notes").mkdir(parents=True, exist_ok=True)
+    return mirror_markdown_tree(source, project_root / "Generated")

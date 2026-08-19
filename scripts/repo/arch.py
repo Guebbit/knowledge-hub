@@ -44,6 +44,8 @@ from pathlib import Path
 
 from shared import config
 
+from repo.vault import mirror_markdown_tree, repo_display_name
+
 _ARCH_SUBPATH = Path("graphify-out/arch")
 _CODEBOARDING_SUBPATH = Path(".codeboarding")
 # CodeBoarding's incremental baseline; its presence means a prior run exists.
@@ -353,18 +355,8 @@ def generate(
 
 def mirror_to_vault(repo_path: str, vault_path: Path) -> Path:
     """Mirror graphify-out/arch into the Obsidian vault under Projects/<repo>/Generated/Architecture/."""
-    from repo.wiki import _repo_display_name  # reuse the wiki's repo-name resolver
-
     source = arch_dir(repo_path)
     if not source.exists() or not any(source.glob("*.md")):
         raise FileNotFoundError(f"architecture layer not generated yet: {source}")
-    destination = vault_path / "Projects" / _repo_display_name(repo_path) / "Generated" / "Architecture"
-    destination.mkdir(parents=True, exist_ok=True)
-
-    source_pages = {page.name for page in source.glob("*.md")}
-    for page in source.glob("*.md"):
-        shutil.copy2(page, destination / page.name)
-    for existing in destination.glob("*.md"):
-        if existing.name not in source_pages:
-            existing.unlink()
-    return destination
+    project_root = vault_path / "Projects" / repo_display_name(repo_path)
+    return mirror_markdown_tree(source, project_root / "Generated" / "Architecture")

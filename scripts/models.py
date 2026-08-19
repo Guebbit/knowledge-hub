@@ -38,7 +38,7 @@ def cmd_pull(target: str) -> None:
     # WhisperModel() downloads the model weights if not already cached in download_root.
     # device="cpu" forces CPU for the download step — GPU isn't needed just to fetch files.
     WhisperModel(size, device="cpu", download_root=str(whisper_dir))
-    print(f"Done.")
+    print("Done.")
 
 
 def cmd_list() -> None:

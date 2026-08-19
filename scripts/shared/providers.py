@@ -58,6 +58,18 @@ def _fallback_to_local(reason: str) -> bool:
     return False
 
 
+def _require_credential_or_die(reason: str, prompt: str) -> str:
+    """Handle a missing provider credential: fall back to local Ollama or exit.
+
+    Returns the local Ollama response when the fallback is accepted (interactively
+    or automatically in non-interactive sessions); otherwise die()s with `reason`.
+    Shared by every cloud adapter so the missing-key behavior is identical.
+    """
+    if _fallback_to_local(reason):
+        return _call_ollama(prompt)
+    die(reason)
+
+
 # --- Adapters ----------------------------------------------------------------
 # Leading underscore = private. Don't call these directly from other modules.
 # Each does a lazy import — the provider's library is only loaded if actually used,
@@ -104,9 +116,7 @@ def _call_anthropic(prompt: str) -> str:
 
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
-        if _fallback_to_local("ANTHROPIC_API_KEY not set — add it to .env"):
-            return _call_ollama(prompt)
-        die("ANTHROPIC_API_KEY not set — add it to .env")
+        return _require_credential_or_die("ANTHROPIC_API_KEY not set — add it to .env", prompt)
 
     # anthropic.Anthropic() creates a stateless API client; the key is sent as a header on each request
     client = anthropic.Anthropic(api_key=key)
@@ -133,9 +143,7 @@ def _call_openai(prompt: str) -> str:
             "  • Azure AI Foundry:  https://ai.azure.com  (set OPENAI_BASE_URL to your deployment URL)\n"
             "Note: GitHub Models is retired and GitHub Copilot is not an OpenAI-compatible API."
         )
-        if _fallback_to_local(reason):
-            return _call_ollama(prompt)
-        die(reason)
+        return _require_credential_or_die(reason, prompt)
 
     # base_url lets the OpenAI client talk to any OpenAI-compatible server, not just api.openai.com
     # (e.g. GitHub Models, Azure OpenAI, vLLM, LM Studio)
@@ -212,9 +220,7 @@ def _call_copilot_cli(prompt: str) -> str:
             "fine-grained PAT (github_pat_...) with the account-level "
             '"Copilot Requests" permission. Classic ghp_ tokens are not accepted.'
         )
-        if _fallback_to_local(reason):
-            return _call_ollama(prompt)
-        die(reason)
+        return _require_credential_or_die(reason, prompt)
 
     cmd = [
         "copilot", "-p", prompt,

@@ -22,8 +22,6 @@
 #   2repo arch . --force-all             # full re-analysis (ignore CodeBoarding incremental baseline)
 #   2repo arch . --dry-run               # report full-vs-incremental without calling the LLM
 #
-# Legacy flag syntax (2repo . --wiki, --check, --query, ...) still works but is deprecated.
-#
 # Register globally:
 #   alias 2repo="$HOME/knowledge-hub/scripts/2repo.sh"
 set -euo pipefail
