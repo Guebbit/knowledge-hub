@@ -4,11 +4,11 @@
     "type": "split",
     "children": [
       {
-        "id": "baacc3f894a515f0",
+        "id": "7042b1c9315b13aa",
         "type": "tabs",
         "children": [
           {
-            "id": "20d8566c4319c17f",
+            "id": "e369cab7ae664b80",
             "type": "leaf",
             "state": {
               "type": "graph",
@@ -188,11 +188,15 @@
       "mermaid-tools:Open Mermaid Toolbar": false
     }
   },
-  "active": "20d8566c4319c17f",
+  "active": "e369cab7ae664b80",
   "lastOpenFiles": [
-    "Untitled 2.canvas",
-    "2026-06-22.md",
+    "2026-08-22.md",
+    "Untitled.canvas",
     "Untitled 1.canvas",
+    "Untitled 2.canvas",
+    "Untitled 3.canvas",
+    "2026-06-21.md",
+    "2026-06-22.md",
     "Guides/llm-vram.md",
     "Inbox/aws-core-concepts.md",
     "Inbox/azure-openai-essentials.md",
@@ -215,10 +219,7 @@
     "Guides/kubernetes-core-concepts.md",
     "Guides/langchain-framework-notes.md",
     "Inbox/container-runtime-comparison.md",
-    "Inbox/kubernetes-core-concepts.md",
-    "Inbox/langchain-framework-notes.md",
     "Untitled.base",
-    "Untitled.canvas",
     "Inbox/ollama.md.tmp.89390.8a5bd333cb5d",
     "Guides/vram-with-models-in-the-ollama-list.md.tmp.89390.c5ffb939eb9b",
     "Guides/llm-wiki.md.tmp.89390.6aa4ef9948ac",
