@@ -2,8 +2,9 @@
 # 2repo — repository intelligence for any codebase, one subcommand per category
 #
 # Usage:
-#   2repo .                              # full run (same as: 2repo graph .)
-#   2repo graph .                        # graph pipeline for the current directory
+#   2repo .                              # every layer: graph + wiki + arch (same as: 2repo all .)
+#   2repo all . --force-all              # every layer, rebuilt from scratch
+#   2repo graph .                        # graph layer only, for the current directory
 #   2repo graph ~/Work/my-repo           # graph pipeline for a specific repo
 #   2repo graph . --update               # incremental update (changed files only)
 #   2repo graph . --preset smart         # override AI preset
@@ -17,10 +18,18 @@
 #   2repo wiki . src/auth.ts src/db.ts   # target specific files (+ graph neighbors)
 #   2repo wiki . --force-all             # full wiki rebuild
 #   2repo wiki . --dry-run               # preview which pages would regenerate
-#   2repo wiki . --mirror-vault          # also mirror wiki pages into vault/Projects/<repo>/Generated
+#   2repo wiki . --no-mirror-vault       # skip the vault mirror (on by default when a vault exists)
 #   2repo arch .                         # architecture layer: component pages + Mermaid diagrams (CodeBoarding)
 #   2repo arch . --force-all             # full re-analysis (ignore CodeBoarding incremental baseline)
 #   2repo arch . --dry-run               # report full-vs-incremental without calling the LLM
+#
+# A bare `2repo <repo>` runs all three layers in order. Its graph step is
+# incremental whenever graphify output already exists, so re-running is cheap;
+# --force-all rebuilds every layer from scratch.
+#
+# Wiki and arch pages are mirrored into vault/Projects/<repo-name>/Generated/
+# automatically whenever a vault is found at VAULT_PATH. Set REPO_MIRROR_VAULT=0
+# in .env, or pass --no-mirror-vault, to turn that off.
 #
 # Register globally:
 #   alias 2repo="$HOME/knowledge-hub/scripts/2repo.sh"
@@ -28,12 +37,22 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# ── --version / -v ──────────────────────────────────────────────────────────────
+for arg in "$@"; do
+    if [[ "$arg" == "--version" || "$arg" == "-v" ]]; then
+        VERSION="$(grep -m1 '^version' "$ROOT/pyproject.toml" | sed 's/.*"\(.*\)".*/\1/')"
+        echo "knowledge-hub $VERSION"
+        exit 0
+    fi
+done
+# ────────────────────────────────────────────────────────────────────────────────
+
 # Load .env so CONTAINER_ENGINE and other host-level vars are available.
 [[ -f "$ROOT/.env" ]] && set -a && source "$ROOT/.env" && set +a
 
 ENGINE="${CONTAINER_ENGINE:-docker}"
 
-COMMANDS=" graph check hook reindex query remember wiki arch "
+COMMANDS=" all graph check hook reindex query remember wiki arch "
 
 # Scan args: find the first argument that is a real directory — that's the repo.
 # Replace it with /target-repo in the container args list. All other args pass through.

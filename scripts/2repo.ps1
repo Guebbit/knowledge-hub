@@ -17,7 +17,16 @@
 #   .\scripts\2repo.ps1 wiki   C:\path\to\repo
 #   .\scripts\2repo.ps1 arch   C:\path\to\repo                    # architecture pages + Mermaid diagrams
 #   .\scripts\2repo.ps1 query  C:\path\to\repo "how do I run tests?"
-#   .\scripts\2repo.ps1        C:\path\to\repo                    # shorthand for `graph`
+#   .\scripts\2repo.ps1 all    C:\path\to\repo                    # every layer: graph + wiki + arch
+#   .\scripts\2repo.ps1        C:\path\to\repo                    # shorthand for `all`
+#
+# A bare `2repo <repo>` runs all three layers in order. Its graph step is
+# incremental whenever graphify output already exists, so re-running is cheap;
+# --force-all rebuilds every layer from scratch.
+#
+# Wiki and arch pages are mirrored into vault/Projects/<repo-name>/Generated/
+# automatically whenever a vault is found at VAULT_PATH. Set REPO_MIRROR_VAULT=0
+# in .env, or pass --no-mirror-vault, to turn that off.
 #
 # Optional: add a shell function to your PowerShell $PROFILE so `2repo` works anywhere:
 #   function 2repo { & "$HOME\Documents\knowledge-hub\scripts\2repo.ps1" @args }
@@ -28,12 +37,21 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root      = Split-Path -Parent $ScriptDir
 $Compose   = Join-Path $Root 'docker-compose.windows.yml'
 
+# ── --version / -v ──────────────────────────────────────────────────────────────
+if ($args -contains '--version' -or $args -contains '-v') {
+    $pyproject = Join-Path $Root 'pyproject.toml'
+    $match     = (Select-String -Path $pyproject -Pattern '^\s*version\s*=\s*"(.+?)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+    Write-Host "knowledge-hub $match"
+    exit 0
+}
+# ────────────────────────────────────────────────────────────────────────────────
+
 if (-not (Test-Path -LiteralPath $Compose)) {
     Write-Error "compose file not found: $Compose"
     exit 1
 }
 
-$commands = @('graph', 'check', 'hook', 'reindex', 'query', 'remember', 'wiki', 'arch')
+$commands = @('all', 'graph', 'check', 'hook', 'reindex', 'query', 'remember', 'wiki', 'arch')
 
 # Scan args: the first argument that is a real directory is the target repo; it is
 # replaced with /target-repo (the in-container mount point). A leading subcommand

@@ -3,8 +3,9 @@
 2repo — repository intelligence pipeline for any codebase.
 
 Usage (via 2repo.sh alias) — one subcommand per category:
-  2repo .                                # full run (same as: 2repo graph .)
-  2repo graph .                          # graph pipeline (extract + execution + index + AI injection)
+  2repo .                                # every layer: graph + wiki + arch (same as: 2repo all .)
+  2repo all . --force-all                # every layer, rebuilt from scratch
+  2repo graph .                          # graph layer only (extract + execution + index + AI injection)
   2repo graph . --update                 # incremental graphify update + orchestration
   2repo check .                          # staleness check vs last baseline
   2repo hook .                           # install stale-warning post-commit hook
@@ -15,10 +16,18 @@ Usage (via 2repo.sh alias) — one subcommand per category:
   2repo wiki . src/auth.ts src/db.ts     # target specific files (+ their graph neighbors)
   2repo wiki . --force-all               # full wiki rebuild (ignore cache and baseline)
   2repo wiki . --dry-run                 # list pages that would be regenerated (no LLM calls)
-  2repo wiki . --mirror-vault            # also mirror wiki pages into vault/Projects/<repo>/Generated
+  2repo wiki . --no-mirror-vault         # skip the vault mirror (on by default when a vault exists)
   2repo arch .                           # architecture layer: component pages + Mermaid diagrams (CodeBoarding)
   2repo arch . --force-all               # full re-analysis (ignore CodeBoarding incremental baseline)
   2repo arch . --dry-run                 # report full-vs-incremental without calling the LLM
+
+A bare `2repo <repo>` runs all three layers in order. Its graph step is
+incremental whenever graphify output already exists, so re-running is cheap;
+--force-all rebuilds every layer from scratch.
+
+Wiki and arch pages are mirrored into vault/Projects/<repo-name>/Generated/
+automatically whenever a vault is found at VAULT_PATH. Set REPO_MIRROR_VAULT=0
+in .env, or pass --no-mirror-vault, to turn that off.
 """
 
 from __future__ import annotations
@@ -40,6 +49,7 @@ from repo import wiki as repo_wiki
 from repo import arch as repo_arch
 from repo.execution import generate as execution_generate
 from repo.injection import AI_TARGETS
+from repo.vault import vault_available
 from shared import config
 from shared.config import GENERATED_DIR_PREFIXES, GENERATED_FILES
 from shared.utils import die
@@ -49,8 +59,9 @@ _BACKEND_MAP = {
     "anthropic": "claude",
     "openai": "openai",
     # Routed to the custom "ollama-json" backend (graphify/providers.json)
-    # instead of graphify's built-in "ollama" — it sets Ollama's enforced
-    # format="json" so local models can't return prose instead of the
+    # instead of graphify's built-in "ollama" — it sends the OpenAI-style
+    # response_format=json_object (Ollama's /v1 endpoint ignores the native
+    # "format" key) so local models can't return prose instead of the
     # requested graph JSON (see graphify/providers.json for details).
     "ollama": "ollama-json",
     # Shells out to the `claude` CLI (see Dockerfile.scripts) instead of the
@@ -108,6 +119,11 @@ def _resolve_preset(name: str | None, *, env_keys: tuple[str, ...] = ("REPO_PRES
 
 _HEARTBEAT_INTERVAL_SECONDS = 20
 
+# Distinguishes "caller did not pin a wiki baseline" from "caller pinned an empty
+# one" (a first `2repo all` run, where no prior state existed). The two must take
+# different paths: the former reads state, the latter must document every file.
+_UNPINNED = object()
+
 
 def _run_with_heartbeat(cmd: list[str], *, cwd: str, label: str, env: dict[str, str] | None = None) -> int:
     """Run cmd (inheriting stdio) while printing a periodic elapsed-time line.
@@ -146,13 +162,25 @@ def _run_graphify(repo_path: str, provider: str, model: str, update: bool) -> No
         # reads GRAPHIFY_CLAUDE_CLI_MODEL. Without this, the preset's model
         # (e.g. "opus") is silently ignored and the CLI's own default is used.
         env = {**os.environ, "GRAPHIFY_CLAUDE_CLI_MODEL": model}
+    elif provider == "ollama":
+        # The ollama-json provider (graphify/providers.json) reads its model
+        # from this env var via model_env_key, so the .env preset's model is
+        # also honoured by `graphify update`, which takes no --model flag.
+        env = {**os.environ, "GRAPHIFY_OLLAMA_MODEL": model}
 
     if update:
         cmd = ["graphify", "update", "."]
     else:
         cmd = ["graphify", "extract", ".", "--backend", backend, "--model", model]
         if provider == "ollama":
-            cmd.extend(["--max-concurrency", "1"])
+            # graphify's default per-chunk budget is 60k tokens, but the
+            # ollama-json backend (custom provider) bypasses graphify's num_ctx
+            # auto-derive, so the Ollama server default (OLLAMA_NUM_CTX) is the
+            # hard ceiling. A chunk bigger than that is silently truncated by
+            # Ollama and comes back as broken JSON. Leave room for graphify's
+            # 16384-token output cap plus system-prompt headroom.
+            token_budget = max(4096, config.OLLAMA_NUM_CTX - 16384 - 2000)
+            cmd.extend(["--max-concurrency", "1", "--token-budget", str(token_budget)])
 
     print(
         "Scan     : graphify honors .gitignore/.graphifyignore and skips common heavy dirs "
@@ -493,6 +521,66 @@ def _query(repo_path: str, query_text: str, top_k: int) -> int:
     return 0
 
 
+def _resolve_mirror_vault(flag: bool | None) -> tuple[bool, bool]:
+    """Resolve whether to mirror into the vault; return (mirror, explicit).
+
+    Precedence: an explicit --mirror-vault / --no-mirror-vault always wins, then
+    REPO_MIRROR_VAULT in .env, then auto-detection — mirroring is on whenever a
+    real vault is present at VAULT_PATH. `explicit` reports whether the caller
+    asked for it by name, which decides whether a missing source dir is fatal.
+    """
+    if flag is not None:
+        return flag, True
+    env = os.getenv("REPO_MIRROR_VAULT", "").strip().lower()
+    if env in ("0", "false", "no", "off"):
+        return False, True
+    if env in ("1", "true", "yes", "on"):
+        return True, True
+    return vault_available(config.VAULT_PATH), False
+
+
+def _mirror_to_vault(mirror: object, repo_path: str, *, label: str, explicit: bool) -> None:
+    """Run a layer's mirror_to_vault, downgrading a missing source to a warning.
+
+    When mirroring is auto-enabled a layer that produced no pages must not fail
+    the whole run; only an explicit --mirror-vault turns that into an error.
+    """
+    try:
+        destination = mirror(repo_path, config.VAULT_PATH)
+    except FileNotFoundError as exc:
+        if explicit:
+            die(str(exc))
+        print(f"{label}     : vault mirror skipped — {exc}")
+        return
+    print(f"{label}     : mirrored to {destination}")
+
+
+def _changed_files_since_commit(repo_path: str, base_commit: str) -> set[str] | None:
+    """Files changed since base_commit, or None when the commit is unusable here."""
+    if not base_commit or not _in_git_repo(repo_path):
+        return None
+    if _git_capture(repo_path, ["cat-file", "-e", f"{base_commit}^{{commit}}"]).returncode != 0:
+        return None
+    return _changed_files_since(repo_path, base_commit)
+
+
+def _baseline_head(repo_path: str) -> str:
+    """Read the recorded baseline commit without the 'state not found' chatter.
+
+    `2repo all` has to capture the baseline *before* the graph layer overwrites
+    it, at a point where a missing state file is the normal first-run case and
+    not worth warning about.
+    """
+    state_file = _repo_state_file(repo_path)
+    if not state_file.exists():
+        return ""
+    try:
+        state = json.loads(state_file.read_text())
+    except json.JSONDecodeError:
+        return ""
+    return str(state.get("head", "")).strip() if isinstance(state, dict) else ""
+
+
 def _baseline_changed_files(repo_path: str) -> set[str] | None:
     """Return files changed since the .2repo-state.json baseline, or None if unusable."""
     if not _in_git_repo(repo_path):
@@ -500,12 +588,13 @@ def _baseline_changed_files(repo_path: str) -> set[str] | None:
     state = _read_state(repo_path)
     if not state:
         return None
-    base_commit = str(state.get("head", "")).strip()
-    if not base_commit:
-        return None
-    if _git_capture(repo_path, ["cat-file", "-e", f"{base_commit}^{{commit}}"]).returncode != 0:
-        return None
-    return _changed_files_since(repo_path, base_commit)
+    return _changed_files_since_commit(repo_path, str(state.get("head", "")).strip())
+
+
+def _graph_baseline_exists(repo_path: str) -> bool:
+    """True when graphify has enough prior output for an incremental `update`."""
+    out = Path(repo_path) / "graphify-out"
+    return (out / "graph.json").is_file() and (out / "manifest.json").is_file()
 
 
 def _normalize_target_files(repo_path: str, files: list[str]) -> set[str]:
@@ -535,14 +624,29 @@ def _wiki(
     force_all: bool,
     dry_run: bool,
     mirror_vault: bool,
+    mirror_explicit: bool,
+    baseline_head: object = _UNPINNED,
 ) -> int:
-    """Generate/update the living wiki, then refresh index + context so pages are retrievable."""
+    """Generate/update the living wiki, then refresh index + context so pages are retrievable.
+
+    baseline_head pins the commit to diff against instead of reading it from the
+    state file. `2repo all` needs this: its graph layer has already advanced the
+    recorded baseline to HEAD by the time the wiki runs, so reading state here
+    would report "nothing changed" and regenerate no pages at all.
+    """
     if target_files:
         changed = _normalize_target_files(repo_path, target_files)
         print(f"Wiki     : targeting {len(changed)} explicit file(s) + graph neighbors")
+    elif force_all:
+        changed = None
+    elif baseline_head is not _UNPINNED:
+        pinned = str(baseline_head or "")
+        changed = _changed_files_since_commit(repo_path, pinned) if pinned else None
+        if changed is None:
+            print("Wiki     : no usable baseline — considering all graph files (hash cache still applies)")
     else:
-        changed = None if force_all else _baseline_changed_files(repo_path)
-        if changed is None and not force_all:
+        changed = _baseline_changed_files(repo_path)
+        if changed is None:
             print("Wiki     : no usable baseline — considering all graph files (hash cache still applies)")
 
     # providers.call_llm reads config.PROVIDER/config.MODEL at call time.
@@ -568,11 +672,7 @@ def _wiki(
     _build_layers(repo_path, provider=provider, model=model, mode="wiki", ai_target=ai_target)
 
     if mirror_vault:
-        try:
-            destination = repo_wiki.mirror_to_vault(repo_path, config.VAULT_PATH)
-        except FileNotFoundError as exc:
-            die(str(exc))
-        print(f"Wiki     : mirrored to {destination}")
+        _mirror_to_vault(repo_wiki.mirror_to_vault, repo_path, label="Wiki", explicit=mirror_explicit)
 
     written = summary.get("written") or []
     removed = summary.get("removed") or []
@@ -589,6 +689,7 @@ def _arch(
     force_all: bool,
     dry_run: bool,
     mirror_vault: bool,
+    mirror_explicit: bool,
 ) -> int:
     """Generate/update the architecture layer, then refresh index + context so pages are retrievable."""
     # CodeBoarding runs as its own subprocess with an explicit provider env, so it
@@ -618,11 +719,7 @@ def _arch(
     _build_layers(repo_path, provider=provider, model=model, mode="arch", ai_target=ai_target)
 
     if mirror_vault:
-        try:
-            destination = repo_arch.mirror_to_vault(repo_path, config.VAULT_PATH)
-        except FileNotFoundError as exc:
-            die(str(exc))
-        print(f"Arch     : mirrored to {destination}")
+        _mirror_to_vault(repo_arch.mirror_to_vault, repo_path, label="Arch", explicit=mirror_explicit)
 
     written = summary.get("written") or []
     removed = summary.get("removed") or []
@@ -630,18 +727,100 @@ def _arch(
     return 0
 
 
-_COMMANDS = ("graph", "check", "hook", "reindex", "query", "remember", "wiki", "arch")
+def _graph(
+    repo_path: str,
+    *,
+    provider: str,
+    model: str,
+    ai_target: str,
+    update: bool,
+) -> None:
+    """Run the graph layer: graphify + execution + memory + index + AI injection."""
+    _run_graphify(repo_path, provider, model, update=update)
+    execution_generate(repo_path)
+    layers = _build_layers(
+        repo_path,
+        provider=provider,
+        model=model,
+        mode="update" if update else "extract",
+        ai_target=ai_target,
+    )
+    _write_state(repo_path, pipeline=layers)
+
+
+def _all(
+    repo_path: str,
+    *,
+    ai_target: str,
+    mirror_vault: bool,
+    mirror_explicit: bool,
+    force_all: bool,
+    preset: str | None,
+) -> int:
+    """Run every layer in order: graph → wiki → arch.
+
+    Each layer resolves its own preset (REPO_PRESET_GRAPH / _WIKI / _ARCH) so a
+    full run honours per-layer model choices, while --preset overrides all three.
+    The AI target is resolved once by the caller and reused, so a full run never
+    prompts more than once.
+    """
+    # Captured before the graph layer moves it to HEAD — see _wiki(baseline_head).
+    prior_head = _baseline_head(repo_path)
+    incremental = not force_all and _graph_baseline_exists(repo_path)
+
+    print("── 1/3 graph ───────────────────────────────────────────────")
+    provider, model = _resolve_preset(preset)
+    print(f"Provider : {provider}  |  Model: {model}")
+    print(f"Graph    : {'incremental (baseline present)' if incremental else 'full extract'}")
+    _graph(repo_path, provider=provider, model=model, ai_target=ai_target, update=incremental)
+
+    print("── 2/3 wiki ────────────────────────────────────────────────")
+    wiki_provider, wiki_model = _resolve_preset(preset, env_keys=("REPO_PRESET_WIKI", "REPO_PRESET_GRAPH"))
+    print(f"Provider : {wiki_provider}  |  Model: {wiki_model}")
+    returncode = _wiki(
+        repo_path,
+        provider=wiki_provider,
+        model=wiki_model,
+        ai_target=ai_target,
+        target_files=None,
+        force_all=force_all,
+        dry_run=False,
+        mirror_vault=mirror_vault,
+        mirror_explicit=mirror_explicit,
+        baseline_head=prior_head,
+    )
+    if returncode != 0:
+        return returncode
+
+    print("── 3/3 arch ────────────────────────────────────────────────")
+    arch_provider, arch_model = _resolve_preset(
+        preset, env_keys=("REPO_PRESET_ARCH", "REPO_PRESET_WIKI", "REPO_PRESET_GRAPH")
+    )
+    print(f"Provider : {arch_provider}  |  Model: {arch_model}")
+    return _arch(
+        repo_path,
+        provider=arch_provider,
+        model=arch_model,
+        ai_target=ai_target,
+        force_all=force_all,
+        dry_run=False,
+        mirror_vault=mirror_vault,
+        mirror_explicit=mirror_explicit,
+    )
+
+
+_COMMANDS = ("all", "graph", "check", "hook", "reindex", "query", "remember", "wiki", "arch")
 
 
 def _with_default_command(argv: list[str]) -> list[str]:
-    """Default to the 'graph' subcommand when none is given: '2repo .' → '2repo graph .'."""
+    """Default to the 'all' subcommand when none is given: '2repo .' → '2repo all .'."""
     for arg in argv:
         if arg in ("-h", "--help"):
             return argv                       # let argparse print help
         if arg.startswith("-"):
             continue                          # skip leading options
-        return argv if arg in _COMMANDS else ["graph", *argv]
-    return ["graph", *argv]                   # empty / all-flags → still default to 'graph'
+        return argv if arg in _COMMANDS else ["all", *argv]
+    return ["all", *argv]                     # empty / all-flags → still default to 'all'
 
 
 def _add_repo_argument(parser: argparse.ArgumentParser) -> None:
@@ -655,7 +834,20 @@ def main() -> None:
     )
     subparsers = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    graph_parser = subparsers.add_parser("graph", help="Build the full pipeline: graph + execution + memory + index + AI injection")
+    all_parser = subparsers.add_parser("all", help="Run every layer in order: graph + wiki + arch (the default when no COMMAND is given)")
+    _add_repo_argument(all_parser)
+    all_parser.add_argument("--force-all", action="store_true", help="Rebuild every layer from scratch (full graph extract, full wiki, full arch re-analysis)")
+    all_parser.add_argument("--preset", metavar="NAME", help="Override the preset for all three layers (e.g. fast, deep)")
+    all_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
+    all_parser.add_argument(
+        "--mirror-vault",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Mirror wiki and architecture pages into the Obsidian vault. "
+             "Default: on when a vault exists at VAULT_PATH; --no-mirror-vault to skip",
+    )
+
+    graph_parser = subparsers.add_parser("graph", help="Build one layer: graph + execution + memory + index + AI injection")
     _add_repo_argument(graph_parser)
     graph_parser.add_argument("--update", action="store_true", help="Incremental graph update (re-extract changed files only)")
     graph_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. fast, deep)")
@@ -690,7 +882,13 @@ def main() -> None:
     wiki_parser.add_argument("files", nargs="*", metavar="FILE", help="Optional explicit files to regenerate (plus their graph neighbors)")
     wiki_parser.add_argument("--force-all", action="store_true", help="Full rebuild, ignoring cache and baseline")
     wiki_parser.add_argument("--dry-run", action="store_true", help="List pages that would regenerate, without calling the LLM")
-    wiki_parser.add_argument("--mirror-vault", action="store_true", help="Mirror wiki pages into the Obsidian vault (Projects/<repo-name>/Generated)")
+    wiki_parser.add_argument(
+        "--mirror-vault",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Mirror wiki pages into the Obsidian vault (Projects/<repo-name>/Generated). "
+             "Default: on when a vault exists at VAULT_PATH; --no-mirror-vault to skip",
+    )
     wiki_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_WIKI (e.g. fast, deep)")
     wiki_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
 
@@ -698,7 +896,13 @@ def main() -> None:
     _add_repo_argument(arch_parser)
     arch_parser.add_argument("--force-all", action="store_true", help="Full re-analysis, ignoring the CodeBoarding incremental baseline")
     arch_parser.add_argument("--dry-run", action="store_true", help="Report whether a full or incremental run would happen, without calling the LLM")
-    arch_parser.add_argument("--mirror-vault", action="store_true", help="Mirror architecture pages into the Obsidian vault (Projects/<repo-name>/Generated/Architecture)")
+    arch_parser.add_argument(
+        "--mirror-vault",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Mirror architecture pages into the Obsidian vault (Projects/<repo-name>/Generated/Architecture). "
+             "Default: on when a vault exists at VAULT_PATH; --no-mirror-vault to skip",
+    )
     arch_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_ARCH (e.g. fast, deep)")
     arch_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
 
@@ -706,6 +910,22 @@ def main() -> None:
 
     if not Path(args.repo).is_dir():
         die(f"not a directory: {args.repo}")
+
+    if args.command == "all":
+        mirror_vault, mirror_explicit = _resolve_mirror_vault(args.mirror_vault)
+        ai_target = _resolve_ai_target(args.ai_target)
+        print(f"AI target: {ai_target}")
+        print(f"Vault    : {config.VAULT_PATH if mirror_vault else 'mirroring off'}")
+        sys.exit(
+            _all(
+                args.repo,
+                ai_target=ai_target,
+                mirror_vault=mirror_vault,
+                mirror_explicit=mirror_explicit,
+                force_all=args.force_all,
+                preset=args.preset,
+            )
+        )
 
     if args.command == "check":
         sys.exit(_check(args.repo))
@@ -719,9 +939,11 @@ def main() -> None:
             die("cannot combine explicit FILE targets with --force-all")
         provider, model = _resolve_preset(args.preset, env_keys=("REPO_PRESET_WIKI", "REPO_PRESET_GRAPH"))
         ai_target = "neutral" if args.dry_run else _resolve_ai_target(args.ai_target)
+        mirror_vault, mirror_explicit = _resolve_mirror_vault(args.mirror_vault)
         print(f"Provider : {provider}  |  Model: {model}")
         if not args.dry_run:
             print(f"AI target: {ai_target}")
+            print(f"Vault    : {config.VAULT_PATH if mirror_vault else 'mirroring off'}")
         sys.exit(
             _wiki(
                 args.repo,
@@ -731,7 +953,8 @@ def main() -> None:
                 target_files=args.files,
                 force_all=args.force_all,
                 dry_run=args.dry_run,
-                mirror_vault=args.mirror_vault,
+                mirror_vault=mirror_vault,
+                mirror_explicit=mirror_explicit,
             )
         )
 
@@ -740,9 +963,11 @@ def main() -> None:
             args.preset, env_keys=("REPO_PRESET_ARCH", "REPO_PRESET_WIKI", "REPO_PRESET_GRAPH")
         )
         ai_target = "neutral" if args.dry_run else _resolve_ai_target(args.ai_target)
+        mirror_vault, mirror_explicit = _resolve_mirror_vault(args.mirror_vault)
         print(f"Provider : {provider}  |  Model: {model}")
         if not args.dry_run:
             print(f"AI target: {ai_target}")
+            print(f"Vault    : {config.VAULT_PATH if mirror_vault else 'mirroring off'}")
         sys.exit(
             _arch(
                 args.repo,
@@ -751,7 +976,8 @@ def main() -> None:
                 ai_target=ai_target,
                 force_all=args.force_all,
                 dry_run=args.dry_run,
-                mirror_vault=args.mirror_vault,
+                mirror_vault=mirror_vault,
+                mirror_explicit=mirror_explicit,
             )
         )
 
@@ -785,16 +1011,7 @@ def main() -> None:
         _write_state(args.repo, pipeline=layers)
         return
 
-    _run_graphify(args.repo, provider, model, update=args.update)
-    execution_generate(args.repo)
-    layers = _build_layers(
-        args.repo,
-        provider=provider,
-        model=model,
-        mode="update" if args.update else "extract",
-        ai_target=ai_target,
-    )
-    _write_state(args.repo, pipeline=layers)
+    _graph(args.repo, provider=provider, model=model, ai_target=ai_target, update=args.update)
 
 
 if __name__ == "__main__":

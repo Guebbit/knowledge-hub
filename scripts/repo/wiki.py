@@ -114,12 +114,31 @@ def _hash_bytes(data: bytes) -> str:
 
 
 def _node_path(node: object) -> str | None:
-    """Extract a repo-relative file path from a graph node of unknown shape."""
+    """Extract a repo-relative file path from a graph node of unknown shape.
+
+    `source_file` comes first: graphify 0.9.x emits symbol-level nodes whose
+    `id` is a mangled slug ("husky_applypatch_msg"), not a path — trusting `id`
+    there yields a file set that matches nothing on disk. `id`/`name` stay last
+    for older graphs whose nodes carried the path in one of those keys.
+    """
     if isinstance(node, str):
         return node
     if not isinstance(node, dict):
         return None
-    for key in ("path", "file", "file_path", "filepath", "id", "name"):
+    for key in ("source_file", "path", "file", "file_path", "filepath", "id", "name"):
+        value = node.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _node_id(node: object) -> str | None:
+    """Extract the identifier that graph edges use to reference this node."""
+    if isinstance(node, str):
+        return node
+    if not isinstance(node, dict):
+        return None
+    for key in ("id", "name", "path", "file"):
         value = node.get(key)
         if isinstance(value, str) and value:
             return value
@@ -155,12 +174,20 @@ def load_graph(repo_path: str) -> tuple[set[str], dict[str, set[str]]]:
         return set(), {}
 
     files: set[str] = set()
+    # Edges reference nodes by id, which is not the file path on symbol-level
+    # graphs — keep the mapping so endpoints can be resolved back to files.
+    path_by_id: dict[str, str] = {}
     raw_nodes = data.get("nodes") or data.get("files") or []
     if isinstance(raw_nodes, list):
         for node in raw_nodes:
             path = _node_path(node)
-            if path:
-                files.add(path.lstrip("./"))
+            if not path:
+                continue
+            path = path.lstrip("./")
+            files.add(path)
+            node_id = _node_id(node)
+            if node_id:
+                path_by_id[node_id] = path
 
     adjacency: dict[str, set[str]] = {}
     raw_edges = data.get("edges") or data.get("links") or data.get("relations") or []
@@ -169,7 +196,12 @@ def load_graph(repo_path: str) -> tuple[set[str], dict[str, set[str]]]:
             endpoints = _edge_endpoints(edge)
             if not endpoints:
                 continue
-            src, dst = (endpoints[0].lstrip("./"), endpoints[1].lstrip("./"))
+            src = path_by_id.get(endpoints[0], endpoints[0]).lstrip("./")
+            dst = path_by_id.get(endpoints[1], endpoints[1]).lstrip("./")
+            # Symbol-level graphs produce many intra-file edges; a file being its
+            # own neighbor adds nothing to a wiki page's Relationships section.
+            if src == dst:
+                continue
             adjacency.setdefault(src, set()).add(dst)
             adjacency.setdefault(dst, set()).add(src)
     return files, adjacency

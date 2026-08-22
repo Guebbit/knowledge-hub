@@ -3,8 +3,9 @@ Shared helpers for mirroring 2repo-generated Markdown into the Obsidian vault.
 
 Both the wiki layer (repo/wiki.py) and the architecture layer (repo/arch.py)
 mirror their generated pages into vault/Projects/<repo-name>/Generated/...; this
-module holds the logic they share: resolving a human-readable repo name and
-copying + pruning a directory of Markdown pages.
+module holds the logic they share: detecting whether a usable vault is present,
+resolving a human-readable repo name, and copying + pruning a directory of
+Markdown pages.
 """
 
 from __future__ import annotations
@@ -12,6 +13,23 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+
+from shared.config import FOLDERS
+
+
+def vault_available(vault_path: Path) -> bool:
+    """Return True when vault_path looks like a real, usable Obsidian vault.
+
+    Mirroring is on by default (see _resolve_mirror_vault in repo.py), so this
+    has to distinguish "a vault lives here" from "the bind mount exists but is
+    empty". Two markers count: `.obsidian/` (Obsidian has opened it) or any of
+    the standard 2brain folders (a vault scaffolded but not yet opened).
+    """
+    if not vault_path.is_dir():
+        return False
+    if (vault_path / ".obsidian").is_dir():
+        return True
+    return any((vault_path / folder).is_dir() for folder in FOLDERS)
 
 
 def repo_display_name(repo_path: str) -> str:
