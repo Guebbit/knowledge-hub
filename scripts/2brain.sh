@@ -7,6 +7,16 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# ── --version / -v ──────────────────────────────────────────────────────────────
+for arg in "$@"; do
+    if [[ "$arg" == "--version" || "$arg" == "-v" ]]; then
+        VERSION="$(grep -m1 '^version' "$ROOT/pyproject.toml" | sed 's/.*"\(.*\)".*/\1/')"
+        echo "knowledge-hub $VERSION"
+        exit 0
+    fi
+done
+# ────────────────────────────────────────────────────────────────────────────────
+
 # Load .env so host-level settings (CONTAINER_ENGINE, etc.) are available here.
 [[ -f "$ROOT/.env" ]] && set -a && source "$ROOT/.env" && set +a
 

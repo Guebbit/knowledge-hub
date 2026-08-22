@@ -51,9 +51,10 @@ services:
       - ./vault:/vault:rw
       - ./scripts:/scripts:ro
       - /home/${LINUX_USERNAME}/.models:/models:z,rw
-      # Custom graphify provider forcing Ollama's JSON-mode ("format": "json")
-      # so local models can't return prose instead of the requested graph
-      # JSON — see graphify/providers.json. Mounted at graphify's trusted
+      # Custom graphify provider forcing Ollama's JSON-mode via the OpenAI
+      # "response_format" field (the native "format" key is ignored by the
+      # /v1 endpoint) so local models can't return prose instead of the
+      # requested graph JSON — see graphify/providers.json. Mounted at graphify's trusted
       # global path (~/.graphify == /root/.graphify, container has no other
       # user); read-only since the container never needs to write it.
       - ./graphify/providers.json:/root/.graphify/providers.json:ro

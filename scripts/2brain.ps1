@@ -20,6 +20,15 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root      = Split-Path -Parent $ScriptDir
 $Compose   = Join-Path $Root 'docker-compose.windows.yml'
 
+# ── --version / -v ──────────────────────────────────────────────────────────────
+if ($args -contains '--version' -or $args -contains '-v') {
+    $pyproject = Join-Path $Root 'pyproject.toml'
+    $match     = (Select-String -Path $pyproject -Pattern '^\s*version\s*=\s*"(.+?)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+    Write-Host "knowledge-hub $match"
+    exit 0
+}
+# ────────────────────────────────────────────────────────────────────────────────
+
 if (-not (Test-Path -LiteralPath $Compose)) {
     Write-Error "compose file not found: $Compose"
     exit 1

@@ -1,11 +1,11 @@
 {
   "ollama-json": {
     "base_url": "http://ollama:11434/v1",
-    "default_model": "qwen3.6:27b",
+    "model_env_key": "GRAPHIFY_OLLAMA_MODEL",
+    "default_model": "qwen2.5-coder:7b",
     "env_key": "OLLAMA_API_KEY",
     "extra_body": {
-      "format": "json",
-      "keep_alive": "30m"
+      "response_format": { "type": "json_object" }
     }
   }
 }
