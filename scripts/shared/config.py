@@ -82,6 +82,23 @@ AUDIO_EXTENSIONS = {".mp3", ".mp4", ".wav", ".m4a", ".webm", ".ogg", ".flac"}
 
 # --- Generated paths (2repo) ------------------------------------------------
 #
+# OUT_DIR is the root of everything 2repo writes into a target repository, and
+# the single place to change that name. It is named after the tool that owns it:
+# 2repo writes execution, memory, index, context and wiki artifacts here,
+# CodeBoarding writes arch/, and graphify gets the nested subdirectory below.
+OUT_DIR = "2repo"
+
+# graphify's own output, nested so third-party artifacts stay visibly separate
+# from ours. graphify resolves this from the GRAPHIFY_OUT env var (read once at
+# import time in graphify/paths.py), so repo.py exports it for every graphify
+# subprocess instead of moving files around after the fact.
+#
+# The basename must stay "graphify-out". graphify injects
+# basename(GRAPHIFY_OUT) into its own scan-skip set so it never re-ingests its
+# output as source — meaning a basename like "graph" would silently drop every
+# graph/ directory in the *target* repo from extraction.
+GRAPHIFY_OUT = f"{OUT_DIR}/graphify-out"
+
 # Single source of truth for "what 2repo generates". Everything that must ignore
 # generated files derives from these two constants instead of hardcoding its own
 # copy: the git staleness pathspecs, _is_generated_path(), and the wiki's
@@ -89,7 +106,25 @@ AUDIO_EXTENSIONS = {".mp3", ".mp4", ".wav", ".m4a", ".webm", ".ogg", ".flac"}
 #
 # .codeboarding/ is CodeBoarding's native working/baseline dir written by
 # `2repo arch` (analysis.json + rendered Markdown). Its indexed copy lives under
-# graphify-out/arch/; the .codeboarding/ dir itself is machine-owned and must be
+# OUT_DIR/arch/; the .codeboarding/ dir itself is machine-owned and must be
 # ignored by staleness checks and never documented by the wiki.
-GENERATED_DIR_PREFIXES = ("graphify-out/", ".claude/", ".cursor/", ".codeboarding/")
-GENERATED_FILES = ("CLAUDE.md", ".github/copilot-instructions.md")
+# .claude/ is deliberately absent: 2repo's Claude integration is a managed block
+# in CLAUDE.md and nothing else, so a target repo's .claude/ is entirely
+# hand-written config — edits there are real repo changes.
+GENERATED_DIR_PREFIXES = (f"{OUT_DIR}/", ".cursor/", ".codeboarding/")
+# .graphifyignore and .gitattributes carry a 2repo-managed block (see
+# repo/injection.py), so regenerating them must not count as the repo changing —
+# same rule as CLAUDE.md, which likewise mixes managed and hand-written content.
+GENERATED_FILES = (
+    "CLAUDE.md",
+    ".github/copilot-instructions.md",
+    ".graphifyignore",
+    ".gitattributes",
+)
+
+# Directories graphify must never ingest as source. graphify only self-prunes
+# the one directory it writes to (GRAPHIFY_OUT, by basename), so everything
+# generated outside it — our Markdown, CodeBoarding's working dir — would be
+# extracted back into the graph, feeding generated prose into the next
+# generation of it. injection.py writes these into the target's .graphifyignore.
+GRAPHIFY_IGNORE_DIRS = (OUT_DIR, ".codeboarding")

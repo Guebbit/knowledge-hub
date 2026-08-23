@@ -4,129 +4,67 @@ tags:
   - graphify
   - knowledge-graph
   - ai-assistants
-  - mcp
   - dev-tools
 created: 2026-06-21
 folder: Guides
 ---
 
 ## Summary
-Graphify converts your codebase into a queryable knowledge graph, enabling AI assistants to search code structure and semantics without re-reading files. It runs locally using tree-sitter for code analysis and optionally [[Ollama]] for documentation, available via Podman containers or native installation.
+Graphify converts a codebase into a queryable knowledge graph, so AI assistants can search structure and semantics without re-reading files. Code parsing is local via tree-sitter; semantic extraction over docs/markdown optionally goes through [[Ollama]].
 
-## Setup
+In this stack graphify is **not run by hand** — it is a pinned dependency of [[2repo]], which drives it as the first of three layers. The direct CLI is still worth knowing for ad-hoc queries against an existing graph.
 
-### Container Mode (Recommended)
+## How it runs here
 
-> [!TIP] Container mode keeps dependencies isolated and ports consistent across machines.
+`2repo graph <repo>` shells out to graphify inside the `scripts` container, then builds its own layers on top. Two details of that wiring matter:
 
-Register shell commands via `~/.zshrc` or `~/.bashrc`. Adjust `KNOWLEDGE_REPO` if the repo path differs.
-
-```bash
-KNOWLEDGE_REPO="/path/to/AI-ollama-tests"
-
-graphify() {
-  podman run --rm \
-    -v "$(pwd):/workspace:z" -w /workspace \
-    python:3.11-slim \
-    bash -c "pip install graphifyy -q && graphify $*"
-}
-
-knowledge-up() {
-  podman run -d --name knowledge-mcp \
-    -v "$(pwd):/workspace:z" \
-    -v "$KNOWLEDGE_REPO/scripts:/workspace/scripts:ro,z" \
-    -w /workspace -p 8888:8888 -p 8081:8081 \
-    -e OLLAMA_URL="http://host.containers.internal:11434" \
-    -e OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3.5:9b}" \
-    python:3.11-slim \
-    bash /workspace/scripts/start.sh
-  echo "Graphify MCP → http://localhost:8888"
-  echo "Wiki MCP     → http://localhost:8081/mcp"
-}
-
-knowledge-down() {
-  podman stop knowledge-mcp
-  podman rm knowledge-mcp 2>/dev/null
-}
-```
-
-### Native Install
+- **Pinned version.** `graphifyy==0.9.13` in `pyproject.toml` and `Dockerfile.scripts`. The package publishes near-daily and has shipped breaking CLI changes without a major bump — `extract` stopped clustering mid-0.9.x, which is why `2repo` calls `cluster-only` as a follow-up. Bump deliberately.
+- **Output location.** 2repo exports `GRAPHIFY_OUT=2repo/graphify-out` to every graphify subprocess, so the graph lands nested under 2repo's own output tree instead of at the repo root. graphify reads that env var once at import time and every one of its readers honours it.
 
 > [!WARNING] The PyPI package is `graphifyy` (double-y). The CLI command is `graphify` (single-y).
 
+## Direct CLI
+
+Useful against a graph 2repo has already built:
+
 ```bash
-uv tool install graphifyy
-# or pipx install graphifyy
-
-# Optional extras
-uv tool install "graphifyy[pdf]"   # PDF support
-uv tool install "graphifyy[all]"   # PDF + video + Neo4j
+graphify query "how does auth work?"
+graphify explain "RequestHandler"
+graphify path "router" "database"
 ```
 
-## Workflow
+Build/rebuild commands — normally 2repo's job, not yours:
 
-```mermaid
-flowchart TD
-    A[graphify . — build graph] --> B[knowledge-up — start services]
-    B --> C{How to interact?}
-    C -->|CLI| D[graphify query / explain / path]
-    C -->|Browser| E[xdg-open graphify-out/graph.html]
-    C -->|AI Assistant| F[MCP via Claude Code / Cline]
-    D --> G[knowledge-down — stop services]
-    E --> G
-    F --> G
-
-    classDef blue fill:#ADD8E6,stroke:#00008B,color:#000
-    classDef green fill:#90EE90,stroke:#228B22,color:#000
-    classDef yellow fill:#FFD700,stroke:#B8860B,color:#000
-
-    class A,B blue
-    class D,E,F green
-    class G yellow
+```bash
+graphify extract . --backend <backend> --model <model>
+graphify cluster-only . --backend <backend> --model <model>   # names communities, writes GRAPH_REPORT.md
+graphify update .                                             # incremental
 ```
 
-1. **Build Graph:**
-   - `graphify .` (initial scan)
-   - `graphify . --update` (incremental after changes)
-2. **Start MCP Server:** `knowledge-up`
-3. **Query (CLI):**
-   - `graphify query "how does auth work?"`
-   - `graphify explain "RequestHandler"`
-   - `graphify path "router" "database"`
-4. **Visualize:** `xdg-open graphify-out/graph.html`
-5. **Cleanup:** `knowledge-down`
-6. **Git Ignore:** Add `graphify-out/` and `docs/wiki/` to `.gitignore`.
+## Artifacts
 
-## AI Integrations
+Under `<repo>/2repo/graphify-out/`:
 
-- **Claude Code:**
-  - Add MCP server to `~/.claude/settings.json`: `"url": "http://localhost:8888"`
-  - Install skill: `graphify claude install`
-  - Use slash commands: `/graphify query`, `/graphify explain`, `/graphify path`
-- **Cline (VS Code):**
-  - Add MCP server in settings: `http://localhost:8888`
-- **HTTP API:**
-  - List tools: `curl http://localhost:8888/tools`
-  - Call tool: `POST http://localhost:8888/call` with JSON payload
-
-## Configuration
-
-- **Ollama Backend:**
-  - Code parsing is local via tree-sitter.
-  - Enable semantic extraction for docs/markdown: `graphify . --backend ollama --model <model>`
-- **Exclusions:**
-  - Create `.graphifyignore` (gitignore syntax) in project root.
-  - Respects both `.gitignore` and `.graphifyignore`.
-- **Auto-Rebuild:**
-  - `graphify hook install` or add manual `.git/hooks/post-commit` script.
-
-## Quick Reference
-
-| Action | Command / URL |
+| File | What it is |
 |---|---|
-| Build Graph | `graphify .` |
-| Update Graph | `graphify . --update` |
-| Start MCP | `knowledge-up` |
-| Stop MCP | `knowledge-down` |
-| Graphify MCP | `http://localhost:8888` |
-| Wiki MCP | `http://localhost:8081/mcp` |
+| `graph.json` | Raw nodes/edges — the graph itself |
+| `manifest.json` | Extraction manifest; its presence marks a usable incremental baseline |
+| `GRAPH_REPORT.md` | Human-readable structure/module/relationship summary |
+| `graph.html` | Standalone interactive viewer (`xdg-open` it) |
+
+These are **committed**, not ignored — see [[2repo]] for why. `graph.html` is the one worth adding to `.gitignore`: large, and regenerable from `graph.json`.
+
+## Exclusions
+
+- `.graphifyignore` in the project root, gitignore syntax. Both `.gitignore` and `.graphifyignore` are respected, merged per directory.
+- 2repo writes a managed block into `.graphifyignore` listing `2repo/` and `.codeboarding/`. This is load-bearing: graphify self-prunes only the single directory it writes to (by basename of `GRAPHIFY_OUT`), so without that block it would re-ingest 2repo's own wiki and arch pages as source.
+- Common heavy dirs (`node_modules`, `dist`, `build`, `.next`, venvs, caches) are skipped by name automatically.
+
+## Gotcha: the output basename
+
+graphify injects `basename(GRAPHIFY_OUT)` into its own scan-skip set. Renaming the output directory to something generic — `graph`, `out`, `docs` — would silently drop every directory of that name in the *target* repo from extraction. The nested dir keeps the basename `graphify-out` for exactly this reason.
+
+## Related
+- [[2repo]] — the pipeline that drives graphify and adds execution, memory, index, wiki, and architecture layers
+- [[llm-wiki]] — the living-documentation layer built on top of the graph
+- [[Ollama]] — local backend for semantic extraction

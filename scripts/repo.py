@@ -72,7 +72,9 @@ _BACKEND_MAP = {
     "claude-code": "claude-cli",
 }
 
-_STATE_FILE_SUBPATH = Path("graphify-out/.2repo-state.json")
+_OUT = Path(config.OUT_DIR)
+_GRAPHIFY_OUT = Path(config.GRAPHIFY_OUT)
+_STATE_FILE_SUBPATH = _OUT / ".2repo-state.json"
 # git pathspecs that exclude 2repo's own generated output from staleness diffs,
 # derived from the shared generated-path definitions in config.
 _STALE_EXCLUDES = [
@@ -83,8 +85,9 @@ _PORCELAIN_STATUS_PREFIX_LENGTH = 3
 
 
 _REQUIRED_PIPELINE_ARTIFACTS = (
-    Path("graphify-out/GRAPH_REPORT.md"),
-    Path("graphify-out/EXECUTION.md"),
+    # GRAPH_REPORT.md is graphify's own product and lands in its nested dir.
+    _GRAPHIFY_OUT / "GRAPH_REPORT.md",
+    _OUT / "EXECUTION.md",
 )
 _QUERY_EXCERPT_LENGTH = 320
 _AI_TARGET_PROMPT = (
@@ -156,17 +159,23 @@ def _run_graphify(repo_path: str, provider: str, model: str, update: bool) -> No
     if not backend:
         die(f"provider '{provider}' has no graphify backend — supported: {list(_BACKEND_MAP)}")
 
-    env = None
+    # graphify resolves its output directory from GRAPHIFY_OUT once at import
+    # time (graphify/paths.py) and every reader honours it, so nesting its
+    # artifacts under our OUT_DIR costs an env var rather than a post-run file
+    # shuffle. Every graphify invocation below must carry it — `update` and
+    # `cluster-only` included, or they read from and write to graphify's own
+    # default at the repo root and silently split the output in two.
+    env = {**os.environ, "GRAPHIFY_OUT": config.GRAPHIFY_OUT}
     if provider == "claude-code":
         # graphify's claude-cli backend has no --model flag support; it only
         # reads GRAPHIFY_CLAUDE_CLI_MODEL. Without this, the preset's model
         # (e.g. "opus") is silently ignored and the CLI's own default is used.
-        env = {**os.environ, "GRAPHIFY_CLAUDE_CLI_MODEL": model}
+        env["GRAPHIFY_CLAUDE_CLI_MODEL"] = model
     elif provider == "ollama":
         # The ollama-json provider (graphify/providers.json) reads its model
         # from this env var via model_env_key, so the .env preset's model is
         # also honoured by `graphify update`, which takes no --model flag.
-        env = {**os.environ, "GRAPHIFY_OLLAMA_MODEL": model}
+        env["GRAPHIFY_OLLAMA_MODEL"] = model
 
     if update:
         cmd = ["graphify", "update", "."]
@@ -358,7 +367,7 @@ def _install_hook(repo_path: str) -> int:
 set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [[ -z "${{repo_root}}" ]] && exit 0
-state_file="${{repo_root}}/graphify-out/.2repo-state.json"
+state_file="${{repo_root}}/{_STATE_FILE_SUBPATH.as_posix()}"
 [[ ! -f "${{state_file}}" ]] && exit 0
 
 base_commit="$(grep -Eo '"head"\\s*:\\s*"[^"]+"' "${{state_file}}" | head -n1 | sed -E 's/.*"([^"]+)"/\\1/')"
@@ -435,28 +444,32 @@ def _build_layers(repo_path: str, *, provider: str, model: str, mode: str, ai_ta
     for injected in injected_paths:
         print(f"Inject   : {injected}")
     if not injected_paths:
-        print("Inject   : skipped (neutral target selected)")
+        # Empty means either target=neutral, or every managed block already
+        # matched byte-for-byte. Saying "neutral" for the second case reads as a
+        # misconfiguration when it is just an idempotent re-run.
+        reason = "neutral target selected" if ai_target == "neutral" else "all managed blocks already current"
+        print(f"Inject   : skipped ({reason})")
 
     return {
         "execution": {
-            "artifact": "graphify-out/EXECUTION.md",
+            "artifact": str(_OUT / "EXECUTION.md"),
         },
         "memory": {
-            "artifact": "graphify-out/repo-memory.json",
-            "report": "graphify-out/REPO_MEMORY.md",
+            "artifact": str(_OUT / "repo-memory.json"),
+            "report": str(_OUT / "REPO_MEMORY.md"),
             "synced_entries": synced_entries,
             "count": index_meta["memory_count"],
             "digest": index_meta["memory_digest"],
         },
         "index": {
-            "artifact": "graphify-out/repo-index.json",
+            "artifact": str(_OUT / "repo-index.json"),
             "revision": index_meta["revision"],
             "chunk_count": index_meta["chunk_count"],
             "artifact_count": index_meta["artifact_count"],
             "artifact_digest": index_meta["artifact_digest"],
         },
         "context": {
-            "artifact": "graphify-out/REPO_CONTEXT.md",
+            "artifact": str(_OUT / "REPO_CONTEXT.md"),
             "injected": injected_paths,
             "ai_target": ai_target,
             "provider": provider,
@@ -593,7 +606,7 @@ def _baseline_changed_files(repo_path: str) -> set[str] | None:
 
 def _graph_baseline_exists(repo_path: str) -> bool:
     """True when graphify has enough prior output for an incremental `update`."""
-    out = Path(repo_path) / "graphify-out"
+    out = Path(repo_path) / _GRAPHIFY_OUT
     return (out / "graph.json").is_file() and (out / "manifest.json").is_file()
 
 
@@ -877,7 +890,7 @@ def main() -> None:
     remember_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. fast, deep)")
     remember_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
 
-    wiki_parser = subparsers.add_parser("wiki", help="Generate/update the living wiki (graphify-out/wiki/) incrementally via LLM")
+    wiki_parser = subparsers.add_parser("wiki", help=f"Generate/update the living wiki ({_OUT}/wiki/) incrementally via LLM")
     _add_repo_argument(wiki_parser)
     wiki_parser.add_argument("files", nargs="*", metavar="FILE", help="Optional explicit files to regenerate (plus their graph neighbors)")
     wiki_parser.add_argument("--force-all", action="store_true", help="Full rebuild, ignoring cache and baseline")
@@ -892,7 +905,7 @@ def main() -> None:
     wiki_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_WIKI (e.g. fast, deep)")
     wiki_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
 
-    arch_parser = subparsers.add_parser("arch", help="Generate/update the architecture layer (graphify-out/arch/): component pages + Mermaid diagrams via CodeBoarding")
+    arch_parser = subparsers.add_parser("arch", help=f"Generate/update the architecture layer ({_OUT}/arch/): component pages + Mermaid diagrams via CodeBoarding")
     _add_repo_argument(arch_parser)
     arch_parser.add_argument("--force-all", action="store_true", help="Full re-analysis, ignoring the CodeBoarding incremental baseline")
     arch_parser.add_argument("--dry-run", action="store_true", help="Report whether a full or incremental run would happen, without calling the LLM")

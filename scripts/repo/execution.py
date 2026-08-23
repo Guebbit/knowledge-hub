@@ -7,7 +7,7 @@ Builds a repo-local markdown summary of practical execution metadata:
 - migration locations and tool hints
 
 Output:
-- <repo>/graphify-out/EXECUTION.md
+- <repo>/<config.OUT_DIR>/EXECUTION.md
 """
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ import json
 import re
 import tomllib
 from pathlib import Path
+
+from shared import config
 
 
 _SCRIPT_KEYWORDS = ("test", "build", "lint", "start", "dev", "check", "format")
@@ -43,9 +45,9 @@ _MIGRATION_HINT_FILES = (
 
 
 def generate(repo_path: str) -> None:
-    """Generate graphify-out/EXECUTION.md for the target repository."""
+    """Generate <OUT_DIR>/EXECUTION.md for the target repository."""
     repo = Path(repo_path)
-    output = repo / "graphify-out" / "EXECUTION.md"
+    output = repo / config.OUT_DIR / "EXECUTION.md"
     output.parent.mkdir(parents=True, exist_ok=True)
 
     package_scripts = _read_package_scripts(repo / "package.json")

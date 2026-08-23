@@ -17,14 +17,14 @@ Everything CodeBoarding-specific lives in exactly two private helpers:
     _codeboarding_dir()   — where the tool writes its native output/baseline
 To replace CodeBoarding with another generator later, reimplement those two so
 they still drop human/AI-readable Markdown into `<repo>/.codeboarding/`; the rest
-of this module (mirroring into graphify-out/arch/, pruning, the CLI wiring in
+of this module (mirroring into <OUT_DIR>/arch/, pruning, the CLI wiring in
 repo.py, and index/context folding) is tool-agnostic and stays put.
 
 ────────────────────────────────────────────────────────────────────────────
 DESIGN (mirrors the wiki layer)
 ────────────────────────────────────────────────────────────────────────────
 - Opt-in and expensive: run via `2repo arch <repo>`, never by `2repo graph`.
-- Canonical pages land in `graphify-out/arch/`, so repo/index.py auto-folds them
+- Canonical pages land in `<OUT_DIR>/arch/`, so repo/index.py auto-folds them
   into the semantic index and they surface via `2repo query` + REPO_CONTEXT.md.
 - CodeBoarding keeps its own working/baseline dir at `<repo>/.codeboarding/`
   (analysis.json + fingerprint.json), which is what makes its incremental mode
@@ -46,7 +46,7 @@ from shared import config
 
 from repo.vault import mirror_markdown_tree, repo_display_name
 
-_ARCH_SUBPATH = Path("graphify-out/arch")
+_ARCH_SUBPATH = Path(config.OUT_DIR) / "arch"
 _CODEBOARDING_SUBPATH = Path(".codeboarding")
 # CodeBoarding's incremental baseline; its presence means a prior run exists.
 _BASELINE_FILENAME = "analysis.json"
@@ -279,11 +279,11 @@ def _clean_page(text: str) -> str:
 
 
 def _mirror_pages(repo_path: str) -> tuple[list[str], list[str]]:
-    """Copy rendered pages into graphify-out/arch/ and prune ones no longer present.
+    """Copy rendered pages into <OUT_DIR>/arch/ and prune ones no longer present.
 
     Returns (written, removed) page filenames. Mirroring (rather than pointing the
     index at .codeboarding/ directly) keeps every indexed artifact under
-    graphify-out/ and keeps the swap seam clean: any future generator only has to
+    OUT_DIR and keeps the swap seam clean: any future generator only has to
     produce Markdown in .codeboarding/.
     """
     out_dir = arch_dir(repo_path)
@@ -336,12 +336,12 @@ def generate(
     if not written:
         raise RuntimeError(
             f"codeboarding produced no Markdown pages in {_codeboarding_dir(repo_path)} — "
-            "nothing to mirror into graphify-out/arch/"
+            f"nothing to mirror into {_ARCH_SUBPATH}/"
         )
     for name in written:
-        print(f"Arch     : wrote graphify-out/arch/{name}")
+        print(f"Arch     : wrote {_ARCH_SUBPATH}/{name}")
     for name in removed:
-        print(f"Arch     : pruned graphify-out/arch/{name}")
+        print(f"Arch     : pruned {_ARCH_SUBPATH}/{name}")
 
     return {
         "artifact": str(_ARCH_SUBPATH),
@@ -354,7 +354,7 @@ def generate(
 
 
 def mirror_to_vault(repo_path: str, vault_path: Path) -> Path:
-    """Mirror graphify-out/arch into the Obsidian vault under Projects/<repo>/Generated/Architecture/."""
+    """Mirror <OUT_DIR>/arch into the Obsidian vault under Projects/<repo>/Generated/Architecture/."""
     source = arch_dir(repo_path)
     if not source.exists() or not any(source.glob("*.md")):
         raise FileNotFoundError(f"architecture layer not generated yet: {source}")

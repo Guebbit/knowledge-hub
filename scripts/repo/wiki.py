@@ -2,7 +2,7 @@
 Living wiki generator for 2repo (Karpathy / DeepWiki-style llm-wiki concept).
 
 Turns the graphify dependency graph into readable per-file wiki pages plus a
-top-level overview, written to <repo>/graphify-out/wiki/.
+top-level overview, written to <repo>/<OUT_DIR>/wiki/.
 
 Incrementality is the core design:
 - only changed files (git diff vs the .2repo-state.json baseline) are candidates
@@ -19,14 +19,16 @@ import json
 from pathlib import Path
 
 from repo.vault import mirror_markdown_tree, repo_display_name
+from shared import config
 from shared.config import GENERATED_DIR_PREFIXES
 from shared.providers import call_llm
 from shared.utils import now_iso
 
-_WIKI_SUBPATH = Path("graphify-out/wiki")
+_WIKI_SUBPATH = Path(config.OUT_DIR) / "wiki"
 _CACHE_FILENAME = ".wiki-cache.json"
 _OVERVIEW_FILENAME = "OVERVIEW.md"
-_GRAPH_JSON_SUBPATH = Path("graphify-out/graph.json")
+# graph.json is graphify's own output, so it lives in the nested graphify dir.
+_GRAPH_JSON_SUBPATH = Path(config.GRAPHIFY_OUT) / "graph.json"
 
 _NEIGHBOR_HOPS = 2
 _MAX_FILE_CHARS = 12000
@@ -158,7 +160,7 @@ def _edge_endpoints(edge: object) -> tuple[str, str] | None:
 
 
 def load_graph(repo_path: str) -> tuple[set[str], dict[str, set[str]]]:
-    """Load graphify-out/graph.json → (file set, undirected adjacency map).
+    """Load graphify's graph.json → (file set, undirected adjacency map).
 
     Parses defensively: node/edge key names vary across graphify versions.
     Returns empty structures when the graph file is missing or unreadable.
@@ -378,7 +380,7 @@ def generate(
 
 
 def mirror_to_vault(repo_path: str, vault_path: Path) -> Path:
-    """Mirror graphify-out/wiki into the Obsidian vault under Projects/<repo-name>/Generated/."""
+    """Mirror <OUT_DIR>/wiki into the Obsidian vault under Projects/<repo-name>/Generated/."""
     source = wiki_dir(repo_path)
     if not source.exists():
         raise FileNotFoundError(f"wiki not generated yet: {source}")

@@ -1,7 +1,7 @@
 """
 Semantic index for 2repo artifacts.
 
-Builds a lightweight TF-IDF vector index from graphify-out artifacts and durable
+Builds a lightweight TF-IDF vector index from <OUT_DIR> artifacts and durable
 repo memory, then serves cosine-similarity retrieval for `2repo query`.
 """
 
@@ -15,19 +15,23 @@ from collections import Counter
 from pathlib import Path
 
 from repo import memory as repo_memory
+from shared import config
 from shared.utils import now_iso
 
-_INDEX_SUBPATH = Path("graphify-out/repo-index.json")
+_OUT = Path(config.OUT_DIR)
+_INDEX_SUBPATH = _OUT / "repo-index.json"
+# GRAPH_REPORT.md is graphify's own product, so it lives in the nested graphify
+# output dir; the other two are ours and sit at the root of OUT_DIR.
 _REQUIRED_ARTIFACTS = (
-    Path("graphify-out/GRAPH_REPORT.md"),
-    Path("graphify-out/EXECUTION.md"),
-    Path("graphify-out/REPO_MEMORY.md"),
+    Path(config.GRAPHIFY_OUT) / "GRAPH_REPORT.md",
+    _OUT / "EXECUTION.md",
+    _OUT / "REPO_MEMORY.md",
 )
 _SKIP_INDEX_PATHS = {
-    "graphify-out/.2repo-state.json",
-    "graphify-out/repo-index.json",
-    "graphify-out/repo-memory.json",
-    "graphify-out/wiki/.wiki-cache.json",
+    str(_OUT / ".2repo-state.json"),
+    str(_OUT / "repo-index.json"),
+    str(_OUT / "repo-memory.json"),
+    str(_OUT / "wiki" / ".wiki-cache.json"),
 }
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]{2,}")
 _MAX_CHUNK_CHARS = 1200
@@ -99,13 +103,13 @@ def _chunk_plain_text(text: str) -> list[str]:
 
 
 def _artifact_files(repo: Path) -> list[Path]:
-    """Return indexable graphify-out artifact files, skipping generated index/state."""
-    graphify_out = repo / "graphify-out"
-    if not graphify_out.exists():
+    """Return indexable <OUT_DIR> artifact files, skipping generated index/state."""
+    out_dir = repo / config.OUT_DIR
+    if not out_dir.exists():
         return []
 
     files: list[Path] = []
-    for path in sorted(graphify_out.rglob("*")):
+    for path in sorted(out_dir.rglob("*")):
         if not path.is_file():
             continue
         rel = str(path.relative_to(repo))
@@ -230,7 +234,7 @@ def build_index(repo_path: str, *, runtime_metadata: dict[str, str]) -> dict[str
 
     artifacts = _artifact_files(repo)
     if not artifacts:
-        raise ValueError("no indexable artifacts found in graphify-out")
+        raise ValueError(f"no indexable artifacts found in {config.OUT_DIR}/")
 
     chunks = _build_chunk_records(repo, artifact_files=artifacts, runtime_metadata=runtime_metadata)
     if not chunks:

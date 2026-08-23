@@ -1,8 +1,8 @@
 """
 Durable repository memory storage for 2repo.
 
-Entries are stored in graphify-out/repo-memory.json and mirrored into
-graphify-out/REPO_MEMORY.md for human-readable inspection.
+Entries are stored in <OUT_DIR>/repo-memory.json and mirrored into
+<OUT_DIR>/REPO_MEMORY.md for human-readable inspection.
 """
 
 from __future__ import annotations
@@ -12,10 +12,11 @@ import json
 import re
 from pathlib import Path
 
+from shared import config
 from shared.utils import now_iso
 
-_MEMORY_SUBPATH = Path("graphify-out/repo-memory.json")
-_MEMORY_REPORT_SUBPATH = Path("graphify-out/REPO_MEMORY.md")
+_MEMORY_SUBPATH = Path(config.OUT_DIR) / "repo-memory.json"
+_MEMORY_REPORT_SUBPATH = Path(config.OUT_DIR) / "REPO_MEMORY.md"
 
 
 def _memory_file(repo: Path) -> Path:
@@ -76,7 +77,7 @@ def load_entries(repo_path: str) -> list[dict[str, str]]:
 
 
 def _write_entries(repo: Path, entries: list[dict[str, str]]) -> None:
-    """Persist memory entries to graphify-out/repo-memory.json."""
+    """Persist memory entries to <OUT_DIR>/repo-memory.json."""
     path = _memory_file(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
