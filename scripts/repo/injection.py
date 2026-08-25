@@ -13,11 +13,10 @@ It also writes the two repo-hygiene files that make the generated tree behave:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from shared import config
-
 
 _MARKER_START = "<!-- 2repo:start — regenerate with: 2repo <repo-path> -->"
 _MARKER_END = "<!-- 2repo:end -->"

@@ -12,7 +12,6 @@ from datetime import date
 
 from shared.providers import call_llm
 
-
 # --- Prompts -----------------------------------------------------------------
 #
 # HOW THE TWO-STAGE PROMPT SYSTEM WORKS:

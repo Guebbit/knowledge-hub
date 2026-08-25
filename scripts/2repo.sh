@@ -19,6 +19,9 @@
 #   2repo wiki . --force-all             # full wiki rebuild
 #   2repo wiki . --dry-run               # preview which pages would regenerate
 #   2repo wiki . --no-mirror-vault       # skip the vault mirror (on by default when a vault exists)
+#   2repo . --exclude '**/*.test.ts'     # set the documented scope (persists to <repo>/.2repoignore)
+#   2repo . --include 'src/**,api/**'    # document only these paths
+#   2repo . --rescope                    # re-ask the include/exclude prompt
 #   2repo arch .                         # architecture layer: component pages + Mermaid diagrams (CodeBoarding)
 #   2repo arch . --force-all             # full re-analysis (ignore CodeBoarding incremental baseline)
 #   2repo arch . --dry-run               # report full-vs-incremental without calling the LLM
@@ -27,9 +30,13 @@
 # incremental whenever graphify output already exists, so re-running is cheap;
 # --force-all rebuilds every layer from scratch.
 #
-# Wiki and arch pages are mirrored into vault/Projects/<repo-name>/Generated/
-# automatically whenever a vault is found at VAULT_PATH. Set REPO_MIRROR_VAULT=0
-# in .env, or pass --no-mirror-vault, to turn that off.
+# The module tier (one note per directory) and the arch pages are mirrored into
+# vault/Projects/<repo-name>/Generated/ automatically whenever a vault is found at
+# VAULT_PATH. Per-file wiki pages are machine-tier and stay in the repo. Set
+# REPO_MIRROR_VAULT=0 in .env, or pass --no-mirror-vault, to turn mirroring off.
+#
+# On the first run per repository, 2repo asks which paths to document and saves the
+# answer to <repo>/.2repoignore (gitignore-style patterns, hand-editable).
 #
 # Register globally:
 #   alias 2repo="$HOME/knowledge-hub/scripts/2repo.sh"

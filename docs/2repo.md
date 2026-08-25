@@ -133,14 +133,19 @@ After a successful run, the target repository gets:
 │   │   ├── graph.json
 │   │   ├── manifest.json
 │   │   └── graph.html
-│   ├── wiki/                  # optional, only after 2repo wiki
+│   ├── wiki/                  # per-file pages — machine tier, not mirrored
 │   │   ├── OVERVIEW.md
 │   │   ├── <path_with_underscores>.md
 │   │   └── .wiki-cache.json
+│   ├── modules/               # per-module notes — human tier, mirrored to the vault
+│   │   ├── <repo>_INDEX.md
+│   │   ├── <repo>_<module_with_underscores>.md
+│   │   └── .modules-cache.json
 │   ├── arch/                  # optional, only after 2repo arch
 │   │   ├── overview.md
 │   │   └── <Component>.md
 │   └── .2repo-state.json
+├── .2repoignore               # hand-editable: which files 2repo documents
 ├── .graphifyignore            # managed block: keeps 2repo/ out of the graph
 └── .gitattributes             # managed block: marks 2repo/ generated
 ```
@@ -311,8 +316,7 @@ Model selection: `--preset NAME` > `REPO_PRESET_WIKI` > `REPO_PRESET_GRAPH` > de
 
 After generation the wiki pages are folded into the semantic index (`2repo query` retrieves them) and referenced from `REPO_CONTEXT.md`. Wiki pages are **generated artifacts — never edit them by hand**; regenerate with `2repo wiki <repo>`.
 
-When mirrored to Obsidian, generated pages stay one-way and machine-owned in `vault/Projects/<repo-name>/Generated/`.
-Keep human-written project notes in the sibling `vault/Projects/<repo-name>/Notes/` folder so they are not overwritten on refresh.
+**These pages are the machine tier and are not mirrored into the vault.** One page per file is the right granularity for retrieval and the wrong one for a human. The same run builds the [module tier](#module-tier-2repomodules) on top of them, and that is what reaches Obsidian. Keep human-written project notes in `vault/Projects/<repo-name>/Notes/` so they are never touched by a refresh.
 
 Post-commit automation: `2repo hook` always adds a wiki refresh reminder to the stale warning. Set `REPO_WIKI_AUTO=1` before running `2repo hook` to make the hook run `2repo wiki .` automatically after commits (requires the `2repo` alias on the host).
 
@@ -332,6 +336,61 @@ Like the wiki, the architecture layer is **opt-in and expensive** (never run by 
 
 > Swappable by design: if CodeBoarding is ever abandoned, only two helpers in `scripts/repo/arch.py` (`_run_codeboarding` and `_codeboarding_dir`) know the tool — replace them with another generator that emits Markdown into `<repo>/.codeboarding/` and the rest (indexing, context, CLI) is unchanged.
 
+## Module tier (`2repo/modules/`)
+
+**What it is:** one note per meaningful directory — the tier between the per-file wiki and the whole-repo architecture view. This is what you read, and the only wiki-side output mirrored into the Obsidian vault.
+
+**Why it exists.** The per-file wiki is written for machines: one page per source file, hundreds of them, consumed through the semantic index so an AI never has to open the file. Mirrored into a vault it is unreadable — a 430-file repo becomes 430 disconnected notes that bury your hand-written ones. Every mature tool in this space documents *units of meaning* instead: DeepWiki emits a few dozen topic pages, CodeBoarding (our arch layer) emits component pages, and Obsidian practice calls the same shape a Map of Content. The module tier is that layer.
+
+**How modules are chosen.** Top-down over the directory tree: a directory whose entire subtree holds at most 40 documented files becomes one module; anything larger splits into its children, with files sitting directly in the split directory kept as a module of their own. The result is then merged upward until it fits 30 modules. A 430-file frontend lands on ~30 modules like `src/modules/cart/`, `src/ui/`, `scripts/`.
+
+**What each note contains:** an LLM-written Purpose / Key parts / How it connects / Where to start, then three deterministic sections — a **Mermaid diagram** of the module and its direct neighbours (Obsidian renders these natively), `## Connected modules` as wikilinks taken from the real dependency graph, and `## Files` listing members with their one-line purpose. The hub note opens with a **module map**: the whole dependency graph as one flowchart, edge-capped so it stays a map rather than a hairball. YAML frontmatter carries `tags: 2repo, 2repo/module, project/<repo>` so the vault graph can filter or colour generated notes separately from your own (`-tag:2repo` shows only your thinking). `<repo>_INDEX.md` is the hub every module links back to. Note filenames are namespaced by repository — Obsidian resolves wikilinks by filename across the whole vault, so two projects with a `src/ui/` would otherwise collide.
+
+**Cost:** module notes are written from the already-generated per-file summaries, not from source — about 30 LLM calls for a repo where the per-file tier costs 430. A content hash over each module's member pages makes unchanged modules free on re-runs, and the deterministic parts (frontmatter, links, file lists) are re-rendered every run at zero cost, so links stay correct as the codebase moves.
+
+## Scope: which files get documented (`.2repoignore`)
+
+`2repo` asks once per repository which paths to document, and persists the answer to `.2repoignore` at the repo root:
+
+```text
+[include]
+src/**
+
+[exclude]
+**/*.test.ts
+docs/**
+```
+
+Both sections take gitignore-syntax patterns matched against repo-relative paths — `src/**`, `**/*.test.ts`, `!keep/this.ts`. `[include]` restricts the documented set (empty = everything), `[exclude]` removes from it (empty = nothing), and exclude always wins. The file is hand-editable; the prompt only exists to write it the first time.
+
+```bash
+2repo <repo> --exclude '**/*.test.ts,docs/**'   # set it non-interactively (persists)
+2repo <repo> --include 'src/**,api/**'          # document only these
+2repo <repo> --rescope                          # re-ask the prompt
+REPO_INCLUDE=... REPO_EXCLUDE=... 2repo <repo>  # override for one run, no persistence
+```
+
+Precedence: `--include`/`--exclude` > `REPO_INCLUDE`/`REPO_EXCLUDE` > `.2repoignore` > the interactive prompt > everything.
+
+**Scope is a documentation filter, not an extraction filter.** It decides which files get a wiki page — and therefore which modules exist and what reaches the vault. graphify still extracts everything, so the dependency graph stays complete and neighbour expansion still sees the real topology. Note that narrowing the scope prunes the pages that fall outside it, and widening it later costs one LLM call per file to regenerate them.
+
+> Scope alone will not make a vault readable — excluding tests and docs takes a 430-file repo to 285, still far too many notes. That is what the module tier is for; scope is for cost control and for keeping noise out of the graph.
+
+## Vault layout
+
+When a vault is present, a run produces:
+
+```text
+vault/Projects/<repo-name>/
+├── Notes/                     # yours, never touched
+└── Generated/
+    ├── Modules/               # INDEX.md + one note per module  ← what you read
+    └── Architecture/          # CodeBoarding component pages + Mermaid diagrams
+```
+
+Per-file wiki pages are **not** mirrored: they stay in `<repo>/2repo/wiki/` where the AI reads them. Earlier versions did mirror them flat into `Generated/`; the next wiki run clears that legacy output automatically and reports how many notes it removed.
+
+
 ## Re-running: what recomputes, what is cached
 
 2repo is designed to be re-run constantly. Only the three LLM-backed layers are cached; everything else is deterministic and rebuilt every time (milliseconds, no tokens).
@@ -340,6 +399,7 @@ Like the wiki, the architecture layer is **opt-in and expensive** (never run by 
 |---|---|---|
 | Graph | `2repo/graphify-out/manifest.json` | a file changed (delegated to `graphify update`) |
 | Wiki | `2repo/wiki/.wiki-cache.json` | the source file's SHA-256 changed, or the page is missing |
+| Modules | `2repo/modules/.modules-cache.json` | any per-file page inside the module changed, or its file set moved |
 | Arch | `.codeboarding/analysis.json` | every arch run (incremental if the baseline exists, full otherwise) |
 | Execution / Memory / Index / Context / Injection | *(not cached)* | always — they are free |
 

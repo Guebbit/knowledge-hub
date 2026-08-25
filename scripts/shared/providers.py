@@ -10,16 +10,16 @@ config.PROVIDER and config.MODEL are read at call time (not import time) so that
 runtime overrides via --preset take effect.
 """
 import os
-from typing import Callable
+from collections.abc import Callable
 
 # Import the module object so runtime mutations to config.PROVIDER / config.MODEL are visible.
 from shared import config
 from shared.config import (  # these never change at runtime
-    OLLAMA_URL,
-    OLLAMA_NUM_CTX,
-    OLLAMA_TIMEOUT,
     CLAUDE_CODE_TIMEOUT,
     COPILOT_CLI_TIMEOUT,
+    OLLAMA_NUM_CTX,
+    OLLAMA_TIMEOUT,
+    OLLAMA_URL,
 )
 from shared.utils import die
 
@@ -249,9 +249,9 @@ def _call_copilot_cli(prompt: str) -> str:
     if res.returncode != 0:
         stderr = res.stderr.strip()
         # An expired/missing/wrong-scope token surfaces as an auth error — offer fallback.
-        if "authentic" in stderr.lower() or "no authentication" in stderr.lower():
-            if _fallback_to_local(f"copilot CLI authentication failed: {stderr}"):
-                return _call_ollama(prompt)
+        is_auth_error = "authentic" in stderr.lower() or "no authentication" in stderr.lower()
+        if is_auth_error and _fallback_to_local(f"copilot CLI authentication failed: {stderr}"):
+            return _call_ollama(prompt)
         die(f"copilot CLI exited {res.returncode}: {stderr}")
 
     text = re.sub(r"\x1b\[[0-9;]*m", "", res.stdout).strip()

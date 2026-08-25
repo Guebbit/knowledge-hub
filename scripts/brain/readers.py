@@ -9,8 +9,8 @@ entry to _READERS at the bottom of this file. read_source() never needs to chang
 """
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from shared.config import AUDIO_EXTENSIONS, MODELS_PATH
 from shared.utils import die

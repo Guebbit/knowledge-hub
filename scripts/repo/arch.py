@@ -42,9 +42,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from shared import config
-
 from repo.vault import mirror_markdown_tree, repo_display_name
+from shared import config
 
 _ARCH_SUBPATH = Path(config.OUT_DIR) / "arch"
 _CODEBOARDING_SUBPATH = Path(".codeboarding")
@@ -278,6 +277,28 @@ def _clean_page(text: str) -> str:
     return cleaned.rstrip() + "\n"
 
 
+def _page_frontmatter(repo_path: str, name: str) -> str:
+    """YAML frontmatter tagging an architecture page for the vault.
+
+    Mirrors the module tier's scheme so a single Obsidian graph filter
+    (`-tag:2repo`) hides everything 2repo generates, leaving hand-written notes.
+    """
+    return "\n".join(
+        [
+            "---",
+            "tags:",
+            "  - 2repo",
+            "  - 2repo/arch",
+            f"  - project/{repo_display_name(repo_path)}",
+            "type: architecture",
+            f"component: {name.removesuffix('.md')}",
+            "---",
+            "",
+            "",
+        ]
+    )
+
+
 def _mirror_pages(repo_path: str) -> tuple[list[str], list[str]]:
     """Copy rendered pages into <OUT_DIR>/arch/ and prune ones no longer present.
 
@@ -295,7 +316,9 @@ def _mirror_pages(repo_path: str) -> tuple[list[str], list[str]]:
     written: list[str] = []
     for page in rendered:
         cleaned = _clean_page(page.read_text(encoding="utf-8"))
-        (out_dir / page.name).write_text(cleaned, encoding="utf-8")
+        (out_dir / page.name).write_text(
+            _page_frontmatter(repo_path, page.name) + cleaned, encoding="utf-8"
+        )
         written.append(page.name)
 
     removed: list[str] = []

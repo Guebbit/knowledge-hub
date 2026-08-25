@@ -33,22 +33,22 @@ import argparse
 from datetime import date
 from pathlib import Path
 
+from brain.builder import (
+    build_frontmatter,
+    digest_note,
+    digest_subtopic,
+    generate_note,
+    generate_note_with_context,
+    link_note,
+    plan_notes,
+)
+from brain.readers import read_source
+
 # Import the module object so we can mutate config.PROVIDER / config.MODEL at runtime.
 # "from config import PROVIDER" would give us a copy that ignores later changes.
 from shared import config
-from shared.config import VAULT_PATH, FOLDERS  # these are never mutated at runtime
+from shared.config import FOLDERS, VAULT_PATH  # these are never mutated at runtime
 from shared.utils import die, slugify
-from brain.readers import read_source
-from brain.builder import (
-    generate_note,
-    generate_note_with_context,
-    digest_note,
-    digest_subtopic,
-    plan_notes,
-    build_frontmatter,
-    link_note,
-)
-
 
 # --- Helpers -----------------------------------------------------------------
 

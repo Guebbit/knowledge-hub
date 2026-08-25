@@ -18,7 +18,6 @@ from pathlib import Path
 
 from shared import config
 
-
 _SCRIPT_KEYWORDS = ("test", "build", "lint", "start", "dev", "check", "format")
 _MAX_WORKFLOW_RUN_COMMANDS = 12
 _MAX_MIGRATION_PATHS = 20

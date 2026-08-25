@@ -116,7 +116,7 @@ def add_entry(
         _write_entries(repo, entries)
         return duplicate
 
-    digest = hashlib.sha256(f"{normalized_kind}:{normalized_text}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{normalized_kind}:{normalized_text}".encode()).hexdigest()
     entry = {
         "id": digest[:16],
         "text": normalized_text,

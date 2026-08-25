@@ -18,3 +18,43 @@ dependencies = [
     # this pin protects.
     "graphifyy==0.9.13",
 ]
+
+[project.optional-dependencies]
+# Host-side developer tooling. Not installed into the container image: the tests
+# cover pure logic (grouping, scoping, graph parsing) and need neither the LLM
+# providers nor a running Ollama, so they run on the host in seconds.
+dev = [
+    "pytest",
+    "ruff",
+    # The two runtime dependencies the pure-logic tests actually import:
+    # pathspec backs the scope filter, python-dotenv is imported by shared.config.
+    # Everything heavier (the LLM SDKs, faster-whisper) is deliberately absent —
+    # nothing under tests/ touches a provider, so a dev venv installs in seconds.
+    "pathspec",
+    "python-dotenv",
+]
+
+[tool.pytest.ini_options]
+# scripts/ is the import root — `from repo import modules` mirrors how the
+# container runs them (python /scripts/repo.py), so tests and production agree.
+pythonpath = ["scripts"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["scripts", "tests"]
+
+[tool.ruff.lint]
+# E/F = pyflakes + pycodestyle (unused imports and names, the class of bug that
+# slips in when a function is deleted). I = import sorting. UP = modern syntax.
+# B = bugbear, the genuinely dangerous defaults like mutable arguments.
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    # Long explanatory comments are load-bearing in this codebase; wrapping them
+    # to satisfy a line limit makes them harder to read, not easier.
+    "E501",
+    # Rewriting an if/else block as a ternary makes a branch harder to scan, and
+    # scan-ability is worth more here than a saved line.
+    "SIM108",
+]

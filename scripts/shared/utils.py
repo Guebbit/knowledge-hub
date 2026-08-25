@@ -4,7 +4,7 @@ Kept here so there's one place to change them, not one copy per file.
 """
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import NoReturn
 
 
@@ -23,7 +23,7 @@ def die(msg: str) -> NoReturn:
 
 def now_iso() -> str:
     """Return the current UTC timestamp in ISO-8601 format."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def slugify(text: str) -> str:

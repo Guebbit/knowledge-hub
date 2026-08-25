@@ -10,6 +10,13 @@ Incrementality is the core design:
 - a per-file content-hash cache skips pages whose source did not change
 
 Page naming replaces `/` and `.` with `_` (e.g. src/auth/login.ts → src_auth_login_ts.md).
+
+AUDIENCE: this tier is written for machines. One page per source file is the
+right granularity for the semantic index and REPO_CONTEXT.md — an AI resolves a
+question without opening the file — and the wrong granularity for a human, who
+would face hundreds of near-identical notes. So per-file pages stay in the repo
+and are never mirrored into the vault; repo/modules.py builds the human-facing
+tier on top of them. See docs/2repo-internals.md §8.
 """
 
 from __future__ import annotations
@@ -18,9 +25,11 @@ import hashlib
 import json
 from pathlib import Path
 
-from repo.vault import mirror_markdown_tree, repo_display_name
+from repo.scope import Scope
+from repo.vault import repo_display_name
 from shared import config
 from shared.config import GENERATED_DIR_PREFIXES
+from shared.progress import Progress
 from shared.providers import call_llm
 from shared.utils import now_iso
 
@@ -224,8 +233,10 @@ def expand_neighbors(seeds: set[str], adjacency: dict[str, set[str]], hops: int 
     return expanded
 
 
-def _is_documentable(repo: Path, rel_path: str) -> bool:
-    """Only document real repo files that are not generated artifacts."""
+def _is_documentable(repo: Path, rel_path: str, scope: Scope | None = None) -> bool:
+    """Only document real repo files that are in scope and not generated artifacts."""
+    if scope is not None and not scope.matches(rel_path):
+        return False
     # GENERATED_DIR_PREFIXES is the shared 2repo-generated set; .git/ is added
     # here because the wiki also must never document version-control internals.
     if rel_path.startswith(GENERATED_DIR_PREFIXES + (".git/",)):
@@ -295,6 +306,7 @@ def generate(
     changed_files: set[str] | None,
     force_all: bool = False,
     dry_run: bool = False,
+    scope: Scope | None = None,
 ) -> dict[str, object]:
     """Generate/update the wiki incrementally and return a summary.
 
@@ -309,8 +321,13 @@ def generate(
         )
     graph_files.update(adjacency)
 
-    candidates = sorted(f for f in graph_files if _is_documentable(repo, f))
+    candidates = sorted(f for f in graph_files if _is_documentable(repo, f, scope))
     if not candidates:
+        if scope is not None and not scope.is_empty:
+            raise ValueError(
+                f"no documentable files left after applying the scope ({scope.describe()}) — "
+                f"widen it in {config.OUT_DIR}/../.2repoignore or re-run with --rescope"
+            )
         raise ValueError("no documentable files found in the dependency graph")
 
     if force_all or changed_files is None:
@@ -340,12 +357,15 @@ def generate(
             "dry_run": True,
             "planned": [rel for rel, _ in plan],
             "page_count": len(valid_pages),
+            "candidates": candidates,
+            "adjacency": adjacency,
         }
 
     out_dir = wiki_dir(repo_path)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     written: list[str] = []
+    progress = Progress(len(plan), "Wiki")
     for rel_path, content_hash in plan:
         neighbors = adjacency.get(rel_path, set())
         page = _generate_page(repo, rel_path, neighbors)
@@ -353,7 +373,7 @@ def generate(
         page_file.write_text(page, encoding="utf-8")
         cache[rel_path] = {"hash": content_hash, "page": page_file.name, "generated_at": now_iso()}
         written.append(page_file.name)
-        print(f"Wiki     : wrote {page_file.name}  ({rel_path})")
+        progress.step(rel_path)
 
     for stale in set(cache) - set(candidates):
         cache.pop(stale, None)
@@ -376,15 +396,42 @@ def generate(
         "written": written,
         "removed": removed,
         "page_count": len(list(out_dir.glob("*.md"))) - (1 if overview_path.exists() else 0),
+        # Handed to the module tier so it can group the documented set and lift
+        # the file-level dependency graph to module level.
+        "candidates": candidates,
+        "adjacency": adjacency,
     }
 
 
-def mirror_to_vault(repo_path: str, vault_path: Path) -> Path:
-    """Mirror <OUT_DIR>/wiki into the Obsidian vault under Projects/<repo-name>/Generated/."""
-    source = wiki_dir(repo_path)
-    if not source.exists():
-        raise FileNotFoundError(f"wiki not generated yet: {source}")
-    project_root = vault_path / "Projects" / repo_display_name(repo_path)
-    # Ensure a sibling Notes/ dir exists for hand-written notes alongside the mirror.
-    (project_root / "Notes").mkdir(parents=True, exist_ok=True)
-    return mirror_markdown_tree(source, project_root / "Generated")
+def read_pages(repo_path: str, candidates: list[str]) -> dict[str, str]:
+    """Read the generated page for each candidate file, keyed by source path.
+
+    The module tier summarises these instead of re-reading source, which is what
+    keeps it ~25 LLM calls rather than one per file.
+    """
+    out_dir = wiki_dir(repo_path)
+    pages: dict[str, str] = {}
+    for rel_path in candidates:
+        page = out_dir / page_name_for(rel_path)
+        if page.is_file():
+            pages[rel_path] = page.read_text(encoding="utf-8", errors="replace")
+    return pages
+
+
+def prune_legacy_vault_mirror(repo_path: str, vault_path: Path) -> list[str]:
+    """Remove the flat per-file page mirror written by earlier 2repo versions.
+
+    Until the module tier existed, every per-file page was copied into
+    Projects/<repo>/Generated/ — hundreds of machine-oriented notes sitting in a
+    human vault, which is exactly what the module tier replaced. Nothing writes
+    there any more, so anything still present is legacy output to clear out.
+    Files under Generated/Modules/ and Generated/Architecture/ are untouched.
+    """
+    generated = vault_path / "Projects" / repo_display_name(repo_path) / "Generated"
+    if not generated.is_dir():
+        return []
+    removed = []
+    for page in generated.glob("*.md"):
+        page.unlink()
+        removed.append(page.name)
+    return sorted(removed)

@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Only the dev extra: the suite covers pure logic and never reaches a
+      # provider, so there is nothing to authenticate and no model to pull.
+      - name: Install dev dependencies
+        run: pip install pytest ruff pathspec python-dotenv
+
+      # Linting only — ruff is not used as a formatter here. The codebase uses
+      # deliberate alignment in its explanatory comment blocks, and auto-formatting
+      # would churn them for no benefit.
+      - name: Lint
+        run: ruff check scripts tests
+
+      - name: Test
+        run: pytest -q

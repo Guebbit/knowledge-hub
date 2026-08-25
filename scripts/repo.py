@@ -17,6 +17,9 @@ Usage (via 2repo.sh alias) — one subcommand per category:
   2repo wiki . --force-all               # full wiki rebuild (ignore cache and baseline)
   2repo wiki . --dry-run                 # list pages that would be regenerated (no LLM calls)
   2repo wiki . --no-mirror-vault         # skip the vault mirror (on by default when a vault exists)
+  2repo . --exclude '**/*.test.ts'       # set the documented scope (persists to <repo>/.2repoignore)
+  2repo . --include 'src/**,api/**'      # document only these paths
+  2repo . --rescope                      # re-ask the include/exclude prompt
   2repo arch .                           # architecture layer: component pages + Mermaid diagrams (CodeBoarding)
   2repo arch . --force-all               # full re-analysis (ignore CodeBoarding incremental baseline)
   2repo arch . --dry-run                 # report full-vs-incremental without calling the LLM
@@ -25,9 +28,14 @@ A bare `2repo <repo>` runs all three layers in order. Its graph step is
 incremental whenever graphify output already exists, so re-running is cheap;
 --force-all rebuilds every layer from scratch.
 
-Wiki and arch pages are mirrored into vault/Projects/<repo-name>/Generated/
-automatically whenever a vault is found at VAULT_PATH. Set REPO_MIRROR_VAULT=0
-in .env, or pass --no-mirror-vault, to turn that off.
+The wiki step also builds the module tier (repo/modules.py): one note per
+meaningful directory, written from the per-file pages. That tier and the arch
+pages are mirrored into vault/Projects/<repo-name>/Generated/ whenever a vault is
+found at VAULT_PATH; per-file wiki pages are machine-tier and stay in the repo.
+Set REPO_MIRROR_VAULT=0 in .env, or pass --no-mirror-vault, to turn mirroring off.
+
+Which files get documented is a per-repo scope kept in <repo>/.2repoignore —
+2repo asks once, on the first run, and the file is hand-editable afterwards.
 """
 
 from __future__ import annotations
@@ -39,21 +47,23 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
+from repo import arch as repo_arch
 from repo import index as repo_index
 from repo import injection as repo_injection
 from repo import memory as repo_memory
+from repo import modules as repo_modules
+from repo import scope as repo_scope
 from repo import wiki as repo_wiki
-from repo import arch as repo_arch
 from repo.execution import generate as execution_generate
 from repo.injection import AI_TARGETS
-from repo.vault import vault_available
+from repo.vault import repo_display_name, vault_available
 from shared import config
 from shared.config import GENERATED_DIR_PREFIXES, GENERATED_FILES
+from shared.progress import format_duration
 from shared.utils import die
-
 
 _BACKEND_MAP = {
     "anthropic": "claude",
@@ -121,6 +131,34 @@ def _resolve_preset(name: str | None, *, env_keys: tuple[str, ...] = ("REPO_PRES
 
 
 _HEARTBEAT_INTERVAL_SECONDS = 20
+
+# Accumulated as the layers run and printed once at the end. A full run emits
+# hundreds of progress lines across three layers; without a closing block the
+# only way to learn what actually happened is to scroll back through all of it.
+_SUMMARY: list[tuple[str, str]] = []
+_RUN_START = time.monotonic()
+
+
+def _record(label: str, value: str) -> None:
+    _SUMMARY.append((label, value))
+
+
+def _print_summary(title: str) -> None:
+    """Print the accumulated run summary as a single readable block."""
+    if not _SUMMARY:
+        return
+    _record("Elapsed", format_duration(time.monotonic() - _RUN_START))
+    width = max(len(label) for label, _ in _SUMMARY)
+    body = [f"  {label.ljust(width)}   {value}" for label, value in _SUMMARY]
+    rule = "─" * max(len(title) + 2, *(len(line) for line in body))
+    print("")
+    print(rule)
+    print(f"  {title}")
+    print(rule)
+    for line in body:
+        print(line)
+    print(rule)
+    _SUMMARY.clear()
 
 # Distinguishes "caller did not pin a wiki baseline" from "caller pinned an empty
 # one" (a first `2repo all` run, where no prior state existed). The two must take
@@ -271,7 +309,7 @@ def _write_state(repo_path: str, *, pipeline: dict[str, object]) -> None:
         return
 
     state = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "head": head,
         "threshold": _resolve_threshold(),
         "layers": pipeline,
@@ -505,7 +543,7 @@ def _resolve_ai_target(cli_target: str | None = None) -> str:
     while True:
         choice = input(prompt).strip().lower()
         for key, value, _ in _AI_TARGET_PROMPT:
-            if choice == key or choice == value:
+            if choice in (key, value):
                 return value
         print(f"Invalid selection. Choose 1-{max_option} or a target name.")
 
@@ -566,6 +604,7 @@ def _mirror_to_vault(mirror: object, repo_path: str, *, label: str, explicit: bo
         print(f"{label}     : vault mirror skipped — {exc}")
         return
     print(f"{label}     : mirrored to {destination}")
+    _record(f"{label} → vault", str(destination))
 
 
 def _changed_files_since_commit(repo_path: str, base_commit: str) -> set[str] | None:
@@ -638,6 +677,7 @@ def _wiki(
     dry_run: bool,
     mirror_vault: bool,
     mirror_explicit: bool,
+    scope: repo_scope.Scope,
     baseline_head: object = _UNPINNED,
 ) -> int:
     """Generate/update the living wiki, then refresh index + context so pages are retrievable.
@@ -672,9 +712,30 @@ def _wiki(
             changed_files=changed,
             force_all=force_all,
             dry_run=dry_run,
+            scope=scope,
         )
     except (FileNotFoundError, ValueError) as exc:
         die(str(exc))
+
+    # The module tier is what a human reads: one note per meaningful directory,
+    # built from the per-file pages rather than from source. It runs on every
+    # wiki run so its links stay in step with the file set.
+    candidates = list(summary.get("candidates") or [])
+    adjacency = summary.get("adjacency") or {}
+    module_summary: dict[str, object] = {}
+    if candidates:
+        grouped = repo_modules.select_modules(candidates)
+        try:
+            module_summary = repo_modules.generate(
+                repo_path,
+                grouped=grouped,
+                adjacency=adjacency,
+                page_texts=repo_wiki.read_pages(repo_path, candidates),
+                force_all=force_all,
+                dry_run=dry_run,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            die(str(exc))
 
     if dry_run:
         return 0
@@ -685,11 +746,32 @@ def _wiki(
     _build_layers(repo_path, provider=provider, model=model, mode="wiki", ai_target=ai_target)
 
     if mirror_vault:
-        _mirror_to_vault(repo_wiki.mirror_to_vault, repo_path, label="Wiki", explicit=mirror_explicit)
+        # Per-file pages are machine-tier and deliberately stay out of the vault;
+        # only the module tier is mirrored. Clear the flat mirror older versions
+        # left behind so the vault converges on the readable layout.
+        legacy = repo_wiki.prune_legacy_vault_mirror(repo_path, config.VAULT_PATH)
+        if legacy:
+            print(f"Wiki     : cleared {len(legacy)} legacy per-file page(s) from the vault mirror")
+        _mirror_to_vault(repo_modules.mirror_to_vault, repo_path, label="Modules", explicit=mirror_explicit)
 
     written = summary.get("written") or []
     removed = summary.get("removed") or []
     print(f"Wiki     : done ({len(written)} written, {len(removed)} pruned, {summary.get('page_count')} pages total)")
+    _record("Scope", scope.describe())
+    _record("Wiki", f"{len(written)} written · {len(removed)} pruned · {summary.get('page_count')} pages")
+    if module_summary:
+        module_written = module_summary.get("written") or []
+        module_removed = module_summary.get("removed") or []
+        print(
+            f"Modules  : done ({len(module_written)} written, "
+            f"{len(module_removed)} pruned, "
+            f"{module_summary.get('module_count')} modules)"
+        )
+        _record(
+            "Modules",
+            f"{len(module_written)} written · {len(module_removed)} pruned · "
+            f"{module_summary.get('module_count')} modules",
+        )
     return 0
 
 
@@ -737,6 +819,10 @@ def _arch(
     written = summary.get("written") or []
     removed = summary.get("removed") or []
     print(f"Arch     : done ({len(written)} written, {len(removed)} pruned, {summary.get('page_count')} pages total)")
+    _record(
+        "Arch",
+        f"{len(written)} written · {len(removed)} pruned · {summary.get('mode')} analysis",
+    )
     return 0
 
 
@@ -769,6 +855,7 @@ def _all(
     mirror_explicit: bool,
     force_all: bool,
     preset: str | None,
+    scope: repo_scope.Scope,
 ) -> int:
     """Run every layer in order: graph → wiki → arch.
 
@@ -800,6 +887,7 @@ def _all(
         dry_run=False,
         mirror_vault=mirror_vault,
         mirror_explicit=mirror_explicit,
+        scope=scope,
         baseline_head=prior_head,
     )
     if returncode != 0:
@@ -810,7 +898,7 @@ def _all(
         preset, env_keys=("REPO_PRESET_ARCH", "REPO_PRESET_WIKI", "REPO_PRESET_GRAPH")
     )
     print(f"Provider : {arch_provider}  |  Model: {arch_model}")
-    return _arch(
+    returncode = _arch(
         repo_path,
         provider=arch_provider,
         model=arch_model,
@@ -820,6 +908,8 @@ def _all(
         mirror_vault=mirror_vault,
         mirror_explicit=mirror_explicit,
     )
+    _print_summary(f"2repo · {repo_display_name(repo_path)}")
+    return returncode
 
 
 _COMMANDS = ("all", "graph", "check", "hook", "reindex", "query", "remember", "wiki", "arch")
@@ -852,6 +942,9 @@ def main() -> None:
     all_parser.add_argument("--force-all", action="store_true", help="Rebuild every layer from scratch (full graph extract, full wiki, full arch re-analysis)")
     all_parser.add_argument("--preset", metavar="NAME", help="Override the preset for all three layers (e.g. fast, deep)")
     all_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
+    all_parser.add_argument("--include", metavar="PATTERNS", help="Only document these paths (comma-separated gitignore-style patterns, e.g. 'src/**,api/**'); persists to .2repoignore")
+    all_parser.add_argument("--exclude", metavar="PATTERNS", help="Never document these paths (comma-separated gitignore-style patterns, e.g. '**/*.test.ts,docs/**'); persists to .2repoignore")
+    all_parser.add_argument("--rescope", action="store_true", help="Re-ask the include/exclude prompt even when .2repoignore already exists")
     all_parser.add_argument(
         "--mirror-vault",
         action=argparse.BooleanOptionalAction,
@@ -895,6 +988,9 @@ def main() -> None:
     wiki_parser.add_argument("files", nargs="*", metavar="FILE", help="Optional explicit files to regenerate (plus their graph neighbors)")
     wiki_parser.add_argument("--force-all", action="store_true", help="Full rebuild, ignoring cache and baseline")
     wiki_parser.add_argument("--dry-run", action="store_true", help="List pages that would regenerate, without calling the LLM")
+    wiki_parser.add_argument("--include", metavar="PATTERNS", help="Only document these paths (comma-separated gitignore-style patterns, e.g. 'src/**,api/**'); persists to .2repoignore")
+    wiki_parser.add_argument("--exclude", metavar="PATTERNS", help="Never document these paths (comma-separated gitignore-style patterns, e.g. '**/*.test.ts,docs/**'); persists to .2repoignore")
+    wiki_parser.add_argument("--rescope", action="store_true", help="Re-ask the include/exclude prompt even when .2repoignore already exists")
     wiki_parser.add_argument(
         "--mirror-vault",
         action=argparse.BooleanOptionalAction,
@@ -927,7 +1023,11 @@ def main() -> None:
     if args.command == "all":
         mirror_vault, mirror_explicit = _resolve_mirror_vault(args.mirror_vault)
         ai_target = _resolve_ai_target(args.ai_target)
+        scope = repo_scope.resolve(
+            args.repo, cli_include=args.include, cli_exclude=args.exclude, rescope=args.rescope
+        )
         print(f"AI target: {ai_target}")
+        print(f"Scope    : {scope.describe()}")
         print(f"Vault    : {config.VAULT_PATH if mirror_vault else 'mirroring off'}")
         sys.exit(
             _all(
@@ -937,6 +1037,7 @@ def main() -> None:
                 mirror_explicit=mirror_explicit,
                 force_all=args.force_all,
                 preset=args.preset,
+                scope=scope,
             )
         )
 
@@ -953,23 +1054,32 @@ def main() -> None:
         provider, model = _resolve_preset(args.preset, env_keys=("REPO_PRESET_WIKI", "REPO_PRESET_GRAPH"))
         ai_target = "neutral" if args.dry_run else _resolve_ai_target(args.ai_target)
         mirror_vault, mirror_explicit = _resolve_mirror_vault(args.mirror_vault)
+        scope = repo_scope.resolve(
+            args.repo,
+            cli_include=args.include,
+            cli_exclude=args.exclude,
+            rescope=args.rescope,
+            interactive=not args.dry_run,
+        )
         print(f"Provider : {provider}  |  Model: {model}")
+        print(f"Scope    : {scope.describe()}")
         if not args.dry_run:
             print(f"AI target: {ai_target}")
             print(f"Vault    : {config.VAULT_PATH if mirror_vault else 'mirroring off'}")
-        sys.exit(
-            _wiki(
-                args.repo,
-                provider=provider,
-                model=model,
-                ai_target=ai_target,
-                target_files=args.files,
-                force_all=args.force_all,
-                dry_run=args.dry_run,
-                mirror_vault=mirror_vault,
-                mirror_explicit=mirror_explicit,
-            )
+        returncode = _wiki(
+            args.repo,
+            provider=provider,
+            model=model,
+            ai_target=ai_target,
+            target_files=args.files,
+            force_all=args.force_all,
+            dry_run=args.dry_run,
+            mirror_vault=mirror_vault,
+            mirror_explicit=mirror_explicit,
+            scope=scope,
         )
+        _print_summary(f"2repo wiki · {repo_display_name(args.repo)}")
+        sys.exit(returncode)
 
     if args.command == "arch":
         provider, model = _resolve_preset(
@@ -981,18 +1091,18 @@ def main() -> None:
         if not args.dry_run:
             print(f"AI target: {ai_target}")
             print(f"Vault    : {config.VAULT_PATH if mirror_vault else 'mirroring off'}")
-        sys.exit(
-            _arch(
-                args.repo,
-                provider=provider,
-                model=model,
-                ai_target=ai_target,
-                force_all=args.force_all,
-                dry_run=args.dry_run,
-                mirror_vault=mirror_vault,
-                mirror_explicit=mirror_explicit,
-            )
+        returncode = _arch(
+            args.repo,
+            provider=provider,
+            model=model,
+            ai_target=ai_target,
+            force_all=args.force_all,
+            dry_run=args.dry_run,
+            mirror_vault=mirror_vault,
+            mirror_explicit=mirror_explicit,
         )
+        _print_summary(f"2repo arch · {repo_display_name(args.repo)}")
+        sys.exit(returncode)
 
     provider, model = _resolve_preset(args.preset)
     ai_target = _resolve_ai_target(args.ai_target)

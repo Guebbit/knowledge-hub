@@ -89,7 +89,11 @@ If you want to hook Claude Code directly, run it once per repo:
 
 That creates `CLAUDE.md` at the repo root. Claude Code automatically follows the generated context, and the file includes `@2repo/REPO_CONTEXT.md`, so the repo context is loaded at session start. You can still rerun `2repo ~/Work/my-repo` later to refresh everything incrementally.
 
-Each layer is also callable on its own (`2repo graph`, `2repo wiki`, `2repo arch`), alongside semantic `query`, durable `remember`, and staleness checks. When an Obsidian vault is present, wiki and arch pages are mirrored into it automatically.
+Each layer is also callable on its own (`2repo graph`, `2repo wiki`, `2repo arch`), alongside semantic `query`, durable `remember`, and staleness checks.
+
+**Two tiers, two audiences.** The per-file wiki is written for machines — one page per source file, read through the semantic index so your AI never has to open the file — and stays in the repo. On top of it, 2repo builds a **module tier**: one note per meaningful directory (~30 for a 430-file repo), linked to each other along the real dependency graph. That tier and the architecture pages are what get mirrored into Obsidian, so a project shows up as a couple of dozen readable, connected notes instead of hundreds of orphans. Generated notes are tagged `2repo`, so a graph filter of `-tag:2repo` shows only your own writing.
+
+On the first run per repository, 2repo asks which paths to document — include (blank = everything) and exclude (blank = nothing), as gitignore-style patterns like `**/*.test.ts`. The answer is saved to `.2repoignore` in that repo and is editable by hand; `--include` / `--exclude` / `--rescope` set it from the command line.
 
 → **Full pipeline, subcommands, examples: [docs/2repo.md](docs/2repo.md)**
 
@@ -292,3 +296,29 @@ scripts/ollama.sh fix-gpu  # after a driver update/reboot, if you see "Could not
 | Note not visible in Obsidian | The command prints the path; press the vault refresh button |
 
 Full configuration reference lives in the docs: **[docs/2brain.md](docs/2brain.md)** · **[docs/2repo.md](docs/2repo.md)** · **[docs/ollama.md](docs/ollama.md)**.
+
+## Development
+
+Everything below runs on the host in a throwaway `.venv`. The test suite covers
+pure logic — how files are grouped into modules, how the scope filter decides what
+gets documented, how graphify's JSON is parsed — so it needs no container, no
+Ollama, and no API key, and finishes in well under a second.
+
+```bash
+make          # list the targets
+make test     # pytest
+make lint     # ruff
+make check    # both — this is what CI runs
+make fix      # apply ruff's safe fixes
+make image    # rebuild the scripts container
+make clean    # drop the venv and caches
+```
+
+The first `make` target creates the venv itself, so there is nothing to set up.
+CI (`.github/workflows/ci.yml`) runs `ruff check` and `pytest` on every push and
+pull request.
+
+Ruff is used as a **linter only**, not a formatter: the explanatory comment blocks
+in this codebase are deliberately laid out, and auto-formatting would churn them
+for no benefit. Two rules are switched off on purpose (`E501` long lines, `SIM108`
+forced ternaries) — both are documented with their reason in `pyproject.toml`.

@@ -32,6 +32,7 @@ _SKIP_INDEX_PATHS = {
     str(_OUT / "repo-index.json"),
     str(_OUT / "repo-memory.json"),
     str(_OUT / "wiki" / ".wiki-cache.json"),
+    str(_OUT / "modules" / ".modules-cache.json"),
 }
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]{2,}")
 _MAX_CHUNK_CHARS = 1200

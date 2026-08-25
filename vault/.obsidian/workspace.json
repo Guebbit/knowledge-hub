@@ -4,17 +4,17 @@
     "type": "split",
     "children": [
       {
-        "id": "7042b1c9315b13aa",
+        "id": "0d4a15e8f91d600e",
         "type": "tabs",
         "children": [
           {
-            "id": "e369cab7ae664b80",
+            "id": "925cc66e326df7ff",
             "type": "leaf",
             "state": {
-              "type": "graph",
+              "type": "empty",
               "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "icon": "lucide-file",
+              "title": "New tab"
             }
           }
         ]
@@ -188,8 +188,15 @@
       "mermaid-tools:Open Mermaid Toolbar": false
     }
   },
-  "active": "e369cab7ae664b80",
+  "active": "925cc66e326df7ff",
   "lastOpenFiles": [
+    "Projects/boilerplate-node-backend/Generated/Architecture/Application_Entry_Point_Boot_Orchestration.md",
+    "Reference/vue-3-static-site-generation.md",
+    "Projects/boilerplate-node-backend/Generated/Modules/boilerplate-node-backend_ROOT.md",
+    "Reference/css-build-transformation.md",
+    "Projects/boilerplate-vue-frontend/Generated/docs_modules_users_md.md",
+    "Projects/boilerplate-node-backend/Generated/docs_modules_payments-provider-port_md.md",
+    "Projects/boilerplate-vue-frontend/Generated/src_modules_realtime_module_ts.md",
     "2026-08-22.md",
     "Untitled.canvas",
     "Untitled 1.canvas",
@@ -207,18 +214,12 @@
     "Reference/event-driven-web-architecture.md",
     "Reference/microservices-architecture-overview.md",
     "Reference/backend-as-a-service-essentials.md",
-    "Reference/vue-3-static-site-generation.md",
     "Reference/vue-3-server-rendering.md",
     "Reference/vue3-password-protection-patterns.md",
     "Inbox/css-essentials.md",
     "Inbox/typescript-essentials.md",
     "Reference/nuxt-full-stack-framework.md",
     "Reference/vue-3-core-concepts.md",
-    "Guides/ollama.md",
-    "Reference/container-runtime-comparison.md",
-    "Guides/kubernetes-core-concepts.md",
-    "Guides/langchain-framework-notes.md",
-    "Inbox/container-runtime-comparison.md",
     "Untitled.base",
     "Inbox/ollama.md.tmp.89390.8a5bd333cb5d",
     "Guides/vram-with-models-in-the-ollama-list.md.tmp.89390.c5ffb939eb9b",
