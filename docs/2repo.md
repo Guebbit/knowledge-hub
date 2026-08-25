@@ -409,7 +409,7 @@ Per-file wiki pages are **not** mirrored: they stay in `<repo>/2repo/wiki/` wher
 
 **Switching model or preset invalidates nothing.** The wiki cache hashes source bytes, not the model. To re-document with a better model, ask explicitly: `--force-all`.
 
-**After a failed run**, retry at layer granularity — completed layers are cache hits, so only the layer that died costs anything. The exception is `arch`: CodeBoarding writes its baseline only on success, so a crashed arch run leaves nothing to resume from and the next attempt is another full analysis.
+**After a failed run — or a deliberate pause** (Ctrl+C included), retry at layer granularity — completed layers are cache hits, so only the layer that died (or that you interrupted) costs anything. The wiki layer resumes page-by-page: its cache is saved after every page, so killing it at page 300 of 430 re-uses those 300 for free. The exception is `arch`: CodeBoarding writes its baseline only on success, so a crashed or paused arch run leaves nothing to resume from and the next attempt is another full analysis.
 
 > Full mechanics, per-event breakdown and reset recipes: **[2repo-internals.md §7](2repo-internals.md#7-change-response--what-each-layer-does-when-things-change)**.
 

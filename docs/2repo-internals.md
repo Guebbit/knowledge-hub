@@ -331,8 +331,8 @@ A `2repo <repo>` that dies partway leaves everything the completed layers wrote 
 
 Two things are worth spelling out:
 
-- **The wiki resumes page-by-page.** `.wiki-cache.json` is written once at the end of `generate()`, but `_page_is_fresh` also requires the page file to exist — and pages are written one at a time as they are generated. So a wiki run killed at page 300 of 430 re-uses those 300 on the retry only if the cache was saved; if it was not, the 300 pages are regenerated. Prefer letting a wiki run finish.
-- **The arch layer does not resume at all** (§3c). CodeBoarding writes `analysis.json` only on success, so a crashed arch run leaves no baseline and the next attempt is another full analysis. This is the one place where a failed run costs you the whole layer.
+- **The wiki resumes page-by-page — this is 2repo's pause mechanism.** `.wiki-cache.json` is written after every page (not once at the end), and `_page_is_fresh` also requires the page file to exist. So killing a wiki run at page 300 of 430 — a deliberate Ctrl+C to pause it, or a crash — re-uses those 300 for free on the next `2repo wiki <repo>`; only the unwritten remainder costs tokens.
+- **The arch layer does not resume at all** (§3c). CodeBoarding writes `analysis.json` only on success, so a crashed *or paused* arch run leaves no baseline and the next attempt is another full analysis. This is the one place where interrupting a run costs you the whole layer — let an arch run finish, or accept redoing it.
 
 Because the state baseline is written by the graph layer and never by wiki or arch, a run that dies in the arch layer still records the graph baseline at the new HEAD. The retry therefore sees "nothing changed" for the wiki — which is correct, since the wiki already completed.
 
