@@ -315,6 +315,26 @@ Like the wiki, the architecture layer is **opt-in and expensive** (never run by 
 
 > Swappable by design: if CodeBoarding is ever abandoned, only two helpers in `scripts/repo/arch.py` (`_run_codeboarding` and `_codeboarding_dir`) know the tool — replace them with another generator that emits Markdown into `<repo>/.codeboarding/` and the rest (indexing, context, CLI) is unchanged.
 
+## Re-running: what recomputes, what is cached
+
+2repo is designed to be re-run constantly. Only the three LLM-backed layers are cached; everything else is deterministic and rebuilt every time (milliseconds, no tokens).
+
+| Layer | Cached in | Re-runs when |
+|---|---|---|
+| Graph | `2repo/graphify-out/manifest.json` | a file changed (delegated to `graphify update`) |
+| Wiki | `2repo/wiki/.wiki-cache.json` | the source file's SHA-256 changed, or the page is missing |
+| Arch | `.codeboarding/analysis.json` | every arch run (incremental if the baseline exists, full otherwise) |
+| Execution / Memory / Index / Context / Injection | *(not cached)* | always — they are free |
+
+**Creating, editing, deleting files.** Uncommitted and untracked changes count, so you do not have to commit before refreshing. A new file gets a wiki page and a deleted file's page is pruned — but only after the graph layer has seen it, so use a bare `2repo <repo>` (graph runs first) rather than `2repo wiki <repo>` alone when the file set changed.
+
+**Switching model or preset invalidates nothing.** The wiki cache hashes source bytes, not the model. To re-document with a better model, ask explicitly: `--force-all`.
+
+**After a failed run**, retry at layer granularity — completed layers are cache hits, so only the layer that died costs anything. The exception is `arch`: CodeBoarding writes its baseline only on success, so a crashed arch run leaves nothing to resume from and the next attempt is another full analysis.
+
+> Full mechanics, per-event breakdown and reset recipes: **[2repo-internals.md §7](2repo-internals.md#7-change-response--what-each-layer-does-when-things-change)**.
+
+
 ## Semantic retrieval model
 
 `repo-index.json` stores chunked vectors from:

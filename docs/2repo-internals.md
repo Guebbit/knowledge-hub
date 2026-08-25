@@ -162,6 +162,24 @@ After generation, the wiki pages are folded into the semantic index and referenc
 
 > Model selection for the wiki follows its own cascade: `--preset` > `REPO_PRESET_WIKI` > `REPO_PRESET_GRAPH` > default preset. Use a small/fast model for routine refreshes and a big model for `--force-all` rebuilds.
 
+### 3c. `arch` — delegated, all-or-nothing incrementality
+The architecture layer's incrementality is CodeBoarding's, not 2repo's. The adapter (`scripts/repo/arch.py`) makes exactly one decision before handing over:
+
+```
+.codeboarding/analysis.json exists  and  not --force-all   →  codeboarding incremental --local <repo>
+otherwise                                                  →  codeboarding full        --local <repo>
+```
+
+`analysis.json` is both the rendered pages' source *and* the incremental baseline — there is no separate cache file and no per-component hash check on 2repo's side. Three consequences worth internalising:
+
+- **The first successful run is the expensive one.** It is a full analysis of the whole repo. Every run after it is incremental and much cheaper, until you pass `--force-all` or delete `.codeboarding/`.
+- **A failed run is not resumable.** CodeBoarding writes `analysis.json` at the end of a run, not progressively. If a run dies — crashed CLI, killed container, unreachable model — nothing is salvaged and the *next* run starts a full analysis again from zero. There is no partial-progress file to resume from.
+- **`--force-all` does not delete the old pages up front.** It re-runs the full analysis, then `_mirror_pages` overwrites `2repo/arch/` and prunes pages the new analysis no longer produces. So a failed `--force-all` leaves the previous pages intact.
+
+Unlike the wiki, the arch layer never consults git: it does not diff against the `.2repo-state.json` baseline and does not expand along the dependency graph. Deciding what changed is entirely CodeBoarding's `fingerprint.json` business.
+
+`--dry-run` prints which mode *would* run (`baseline present` / `no baseline yet` / `--force-all`) and makes no LLM calls — the cheapest way to check whether you are about to pay for a full analysis.
+
 ---
 
 ## 4. The semantic retrieval algorithm (`2repo query`)
@@ -204,25 +222,106 @@ After the index is built, `sync_entries` stamps every memory entry with the curr
 
 Putting it together — this is the "what combines with what" map:
 
-| Command | Graph | Execution | Memory | Index | Context | Injection | Wiki | Writes state |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| `graph` / `graph --update` | ● | ● | ● | ● | ● | ● | — | ● |
-| `reindex` | — | — | ● | ● | ● | ● | — | ● |
-| `remember` | — | — | ● (add) | ● | ● | ● | — | ● |
-| `wiki` | — | — | ● | ● | ● | ● | ● | — |
-| `arch` | — | — | ● | ● | ● | ● | ● | — |
-| `query` | — | — | — | read | — | — | — | — |
-| `check` | — | — | — | — | — | — | — | read |
-| `hook` | — | — | — | — | — | — | — | — |
+| Command | Graph | Execution | Memory | Index | Context | Injection | Wiki | Arch | Writes state |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| `all` (bare `2repo <repo>`) | ● | ● | ● | ●×3 | ●×3 | ●×3 | ● | ● | ● |
+| `graph` / `graph --update` | ● | ● | ● | ● | ● | ● | — | — | ● |
+| `reindex` | — | — | ● | ● | ● | ● | — | — | ● |
+| `remember` | — | — | ● (add) | ● | ● | ● | — | — | ● |
+| `wiki` | — | — | ● | ● | ● | ● | ● | — | — |
+| `arch` | — | — | ● | ● | ● | ● | — | ● | — |
+| `query` | — | — | — | read | — | — | — | — | — |
+| `check` | — | — | — | — | — | — | — | — | read |
+| `hook` | — | — | — | — | — | — | — | — | — |
 
 Reading the table:
+- **`all`** runs `graph → wiki → arch` in that order, and each of the three calls `_build_layers` on the way out — so memory/index/context/injection are rebuilt **three times** in one run (`●×3`). They are deterministic and cheap, so this costs seconds, not tokens; the benefit is that a run which dies in the arch layer still leaves a consistent index covering everything the graph and wiki layers produced.
 - **`graph`** is the only command that runs the full stack from extraction up.
 - **`reindex`** rebuilds everything *above* the graph from existing artifacts — use it after editing memory or switching AI target without paying for re-extraction.
 - **`remember`** adds a fact, then rebuilds index→context→injection so the fact is immediately retrievable, and moves the state baseline.
 - **`wiki`** runs its own layer, then refreshes index+context so pages are queryable — but pointedly leaves the state baseline alone (§2).
-- **`arch`** behaves exactly like `wiki` (its own optional doc layer, then index+context refresh, no state write), but produces component/topic pages + Mermaid diagrams in `2repo/arch/` instead of per-file pages.
+- **`arch`** behaves exactly like `wiki` (its own optional doc layer, then index+context refresh, no state write), but produces component/topic pages + Mermaid diagrams in `2repo/arch/` instead of per-file pages. It does not run the wiki layer, and the wiki does not run it — the two are independent tiers over the same graph.
 - **`query`** and **`check`** are read-only.
 
 ---
+
+---
+
+## 7. Change response — what each layer does when things change
+
+§3 explains *how* incrementality works. This section is the practical companion: given some event — a file created, edited, deleted, a run that crashed, a model swapped — what actually recomputes on the next `2repo <repo>`?
+
+### 7.1 What each layer keys off
+
+| Layer | Persisted state | Invalidated by | Cost when nothing changed |
+|---|---|---|---|
+| Graph (`graphify`) | `2repo/graphify-out/graph.json` + `manifest.json` | graphify's own manifest (per-file) | `update` walks the manifest; near-zero LLM calls |
+| Execution | *(none)* | nothing — always regenerated | milliseconds, no LLM (pure file scan of `package.json`, `Makefile`, `pyproject.toml`, workflows, migrations) |
+| Memory | `2repo/repo-memory.json` | `2repo remember` only | milliseconds, no LLM |
+| Index | `2repo/repo-index.json` | rebuilt in full every time; its **revision** changes when artifacts, memory, or runtime metadata change | seconds, no LLM (TF-IDF is local) |
+| Context / Injection | `REPO_CONTEXT.md` + managed blocks in `CLAUDE.md` etc. | rebuilt every time; blocks are only rewritten if the bytes differ | milliseconds, no LLM |
+| Wiki | `2repo/wiki/.wiki-cache.json` (SHA-256 per source file) | source-file content hash, or a missing page file | zero LLM calls — every page is a cache hit |
+| Arch | `.codeboarding/analysis.json` + `fingerprint.json` | CodeBoarding's fingerprint | one incremental CodeBoarding run (still an LLM pass, but scoped) |
+
+The dividing line: **everything except the graph, wiki, and arch layers is recomputed unconditionally**, because those layers are deterministic and free. Only the three LLM-backed layers are cached.
+
+### 7.2 Event by event
+
+**You create a new file.**
+The graph layer picks it up (`graphify update` sees a new entry in its manifest). The wiki then documents it, because `git status --porcelain --untracked-files=normal` counts untracked files as changed — a new file does **not** need to be committed first. The arch layer notices it only if CodeBoarding's fingerprint decides the component structure moved.
+
+> Ordering matters: wiki candidates come from `graph.json`, so a file that is not yet in the graph gets no page. A bare `2repo <repo>` is safe (graph runs first, in the same run). Running `2repo wiki <repo>` on its own against a stale graph will silently skip the new file — refresh the graph first.
+
+**You edit an existing file.**
+Its content hash changes → its wiki page regenerates, plus its 2-hop dependency-graph neighbors (§3b). Committed and uncommitted edits both count: the changed set is the union of `git diff <baseline>..HEAD` and the working-tree/untracked status, minus 2repo's own generated paths.
+
+**You delete or rename a file.**
+Once the graph refreshes, the file leaves `candidates`; `_prune_stale_pages` deletes its wiki page and its `.wiki-cache.json` entry is dropped. A rename is seen as a delete + create, so the old page is pruned and a new one generated. Same caveat as above: run the graph layer (or a bare `2repo <repo>`), not `2repo wiki` alone, or the stale page survives.
+
+**Nothing changed since the last run.**
+`2repo <repo>` is close to free on the LLM budget: `graphify update` finds no dirty files, every wiki page is a cache hit ("nothing to regenerate — all pages fresh"), and only the deterministic layers rewrite themselves. The arch layer is the exception — it still performs an incremental CodeBoarding run, which is real work. Use `2repo graph <repo> --update` or `2repo wiki <repo>` if you specifically want to avoid that.
+
+**You switch preset or model.**
+This invalidates **nothing**. The wiki cache hashes source bytes, not the model, and CodeBoarding's fingerprint is structural. A better model will only be applied to files that happen to change. To actually re-document a repo with a new model, you must ask for it: `2repo wiki <repo> --force-all`, `2repo arch <repo> --force-all`, or `2repo <repo> --force-all` for everything. The model change *is* visible in the index revision (it feeds `runtime_digest`), but that is metadata, not regeneration.
+
+**You switch AI target** (`--ai-target claude|copilot|cursor|neutral`).
+Only the injection step reacts: managed blocks are rewritten in the new target's bridge files. If every block already matches byte-for-byte, 2repo prints `Inject : skipped (all managed blocks already current)` — that is an idempotent re-run, not a misconfiguration.
+
+**You hand-edit a generated page.**
+Don't — but know what happens if you do. A hand-edited wiki page is **not** restored on the next run: `_page_is_fresh` only checks the source hash and that the page file exists, so your edit survives until the source file changes or you pass `--force-all`. Arch pages are the opposite: they are re-mirrored from `.codeboarding/` on every arch run, so edits are overwritten. Either way the index picks the edited bytes up (they change `artifact_digest`, hence the revision). Put durable human knowledge in `2repo remember` or the vault's `Notes/` folder instead.
+
+**You delete a generated page by hand.**
+The wiki regenerates a missing page only if that file is in the current target set. If nothing changed, the target set is empty and the page stays missing — use `2repo wiki <repo> <the-file>` to target it explicitly, or `--force-all`.
+
+### 7.3 Re-running after a failed run
+
+A `2repo <repo>` that dies partway leaves everything the completed layers wrote on disk, so the retry resumes at layer granularity rather than starting over:
+
+| Failed in | On retry, the graph layer | the wiki layer | the arch layer |
+|---|---|---|---|
+| Graph | full extract if `graph.json`/`manifest.json` are missing, otherwise `update` | not reached before, so runs now | runs now |
+| Wiki | `update` (baseline intact) | resumes: already-written pages are cache hits, only the unwritten remainder costs tokens | runs now |
+| Arch | `update` | all cache hits, ~zero cost | **restarts from zero** |
+
+Two things are worth spelling out:
+
+- **The wiki resumes page-by-page.** `.wiki-cache.json` is written once at the end of `generate()`, but `_page_is_fresh` also requires the page file to exist — and pages are written one at a time as they are generated. So a wiki run killed at page 300 of 430 re-uses those 300 on the retry only if the cache was saved; if it was not, the 300 pages are regenerated. Prefer letting a wiki run finish.
+- **The arch layer does not resume at all** (§3c). CodeBoarding writes `analysis.json` only on success, so a crashed arch run leaves no baseline and the next attempt is another full analysis. This is the one place where a failed run costs you the whole layer.
+
+Because the state baseline is written by the graph layer and never by wiki or arch, a run that dies in the arch layer still records the graph baseline at the new HEAD. The retry therefore sees "nothing changed" for the wiki — which is correct, since the wiki already completed.
+
+### 7.4 Forcing a rebuild
+
+| Goal | Command |
+|---|---|
+| Rebuild every layer from scratch | `2repo <repo> --force-all` |
+| Re-document every file with a new model | `2repo wiki <repo> --force-all` |
+| Full architecture re-analysis | `2repo arch <repo> --force-all` |
+| Re-document specific files (+ their neighbors) | `2repo wiki <repo> src/a.ts src/b.ts` |
+| Preview cost without spending tokens | `2repo wiki <repo> --dry-run` / `2repo arch <repo> --dry-run` |
+| Rebuild index/context/injection from existing artifacts | `2repo reindex <repo>` |
+| Hard reset of one layer | delete `2repo/wiki/` / `.codeboarding/` / `2repo/graphify-out/` and re-run |
+
+Deleting `2repo/` entirely resets everything, including the staleness baseline — the next run is a first run.
 
 See **[2repo.md](2repo.md)** for the command reference and examples, **[2brain.md](2brain.md#configuration-reference)** for shared configuration, and the main **[README](../README.md)** for installation.

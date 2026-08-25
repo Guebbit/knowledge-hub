@@ -53,7 +53,18 @@ Type `2brain "what I just figured out"` and an AI writes a clean, always-identic
 → **Full usage, every flag, examples: [docs/2brain.md](docs/2brain.md)**
 
 ### `2repo` — repository intelligence
-Run `2repo ~/Work/my-repo` and it runs all three layers in order: **graph** (artifacts under `2repo/` — graph report, execution knowledge, durable memory, semantic index, canonical context — plus one editor bridge file for Claude, Copilot, or Cursor), **wiki** (a living per-file wiki), and **arch** (component docs + Mermaid diagrams). Your AI assistant starts each session already knowing the repo instead of re-reading it. Re-running is incremental, so only what changed is regenerated; `--force-all` rebuilds everything.
+Run `2repo ~/Work/my-repo` and it runs the full repo intelligence stack in order: **graph → wiki → arch**. The graph layer creates the canonical repo artifacts under `2repo/` (graph report, execution knowledge, durable memory, semantic index, and `REPO_CONTEXT.md`), then writes one editor bridge file for your selected AI target (`CLAUDE.md`, Copilot instructions, or Cursor rules). The wiki layer adds the per-file living wiki, and the arch layer adds component docs + Mermaid diagrams. Your AI assistant starts each session already knowing the repo instead of re-reading it. Re-running is incremental, so only what changed is regenerated; `--force-all` rebuilds everything.
+
+Yes: a bare `2repo <repo>` is the full pipeline. If you want only one layer, use `2repo graph <repo>`, `2repo wiki <repo>`, or `2repo arch <repo>`.
+
+If you want to hook Claude Code directly, run it once per repo:
+
+```bash
+2repo ~/Work/my-repo --ai-target claude
+# or: 2repo ~/Work/my-repo    # then pick Claude from the interactive selector
+```
+
+That creates `CLAUDE.md` at the repo root. Claude Code automatically follows the generated context, and the file includes `@2repo/REPO_CONTEXT.md`, so the repo context is loaded at session start. You can still rerun `2repo ~/Work/my-repo` later to refresh everything incrementally.
 
 Each layer is also callable on its own (`2repo graph`, `2repo wiki`, `2repo arch`), alongside semantic `query`, durable `remember`, and staleness checks. When an Obsidian vault is present, wiki and arch pages are mirrored into it automatically.
 
