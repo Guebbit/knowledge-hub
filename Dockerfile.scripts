@@ -44,9 +44,14 @@ ENV CODEBOARDING_TELEMETRY=false \
 # needed (2repo invokes ephemeral `run --rm` containers). Node.js above satisfies
 # the Python/TS/JS/PHP language servers. This version renders Markdown via the
 # render_docs() Python API (repo/arch.py drives it in this venv), not a CLI flag.
+# `tqdm` is imported by codeboarding_cli/commands/full_analysis.py but missing
+# from the wheel's declared dependencies (0.13.8), so every `codeboarding`
+# invocation dies with ModuleNotFoundError before it parses argv. Install it
+# alongside; drop this once upstream declares it.
 RUN python -m venv /opt/codeboarding \
     && /opt/codeboarding/bin/pip install --no-cache-dir \
         codeboarding --extra-index-url https://pip.codeboarding.org/simple/ \
+    && /opt/codeboarding/bin/pip install --no-cache-dir tqdm \
     && ln -s /opt/codeboarding/bin/codeboarding /usr/local/bin/codeboarding \
     && ln -s /opt/codeboarding/bin/codeboarding-setup /usr/local/bin/codeboarding-setup \
     && codeboarding-setup
