@@ -299,6 +299,8 @@ Its content hash changes → its wiki page regenerates, plus its 2-hop dependenc
 **You delete or rename a file.**
 Once the graph refreshes, the file leaves `candidates`; `_prune_stale_pages` deletes its wiki page and its `.wiki-cache.json` entry is dropped. A rename is seen as a delete + create, so the old page is pruned and a new one generated. Same caveat as above: run the graph layer (or a bare `2repo <repo>`), not `2repo wiki` alone, or the stale page survives.
 
+If the deleted file was the last member of a module, that module disappears too: `modules.py::generate` recomputes `grouped` from the current candidate set, `_prune` deletes the now-orphaned note from `2repo/modules/`, and its `.modules-cache.json` entry is dropped. The vault follows automatically — `mirror_to_vault` calls `vault.mirror_markdown_tree`, which treats the vault's `Generated/Modules/` folder as an exact reflection of `2repo/modules/`: it copies every current note over and `unlink()`s any destination note whose source is gone. So a module deleted (or emptied by scope) vanishes from the vault on the same run, not just from the repo-local tier. Arch pages behave the same way through `mirror_to_vault` in `arch.py` → `Generated/Architecture/`.
+
 **Nothing changed since the last run.**
 `2repo <repo>` is close to free on the LLM budget: `graphify update` finds no dirty files, every wiki page is a cache hit ("nothing to regenerate — all pages fresh"), and only the deterministic layers rewrite themselves. The arch layer is the exception — it still performs an incremental CodeBoarding run, which is real work. Use `2repo graph <repo> --update` or `2repo wiki <repo>` if you specifically want to avoid that.
 

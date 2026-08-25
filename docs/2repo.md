@@ -390,6 +390,8 @@ vault/Projects/<repo-name>/
 
 Per-file wiki pages are **not** mirrored: they stay in `<repo>/2repo/wiki/` where the AI reads them. Earlier versions did mirror them flat into `Generated/`; the next wiki run clears that legacy output automatically and reports how many notes it removed.
 
+**The mirror is exact, both directions.** `Generated/Modules/` and `Generated/Architecture/` are re-synced from `2repo/modules/` and `2repo/arch/` on every `wiki`/`arch` run: changed notes are re-copied, and any vault note whose source note no longer exists is deleted — not just skipped. So removing a module (delete its files, or narrow `.2repoignore` until it has none left) removes that module's page from `2repo/modules/` *and* from the vault on the next run; editing a file updates its module's note in both places the same way. As with per-file pruning, this only fires once the **graph** layer has seen the change — run a bare `2repo <repo>` (or `2repo graph <repo>` first) rather than `2repo wiki <repo>` alone after deleting or renaming files.
+
 
 ## Re-running: what recomputes, what is cached
 
