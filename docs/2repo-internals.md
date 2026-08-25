@@ -165,9 +165,14 @@ After generation, the wiki pages are folded into the semantic index and referenc
 ### 3c. `arch` — delegated, all-or-nothing incrementality
 The architecture layer's incrementality is CodeBoarding's, not 2repo's. The adapter (`scripts/repo/arch.py`) makes exactly one decision before handing over:
 
-```
-.codeboarding/analysis.json exists  and  not --force-all   →  codeboarding incremental --local <repo>
-otherwise                                                  →  codeboarding full        --local <repo>
+```mermaid
+flowchart LR
+    S["2repo arch"] --> D{"analysis.json exists<br/>and no --force-all?"}
+    D -->|"yes"| I["codeboarding incremental<br/>cheap"]
+    D -->|"no"| F["codeboarding full<br/>expensive, whole repo"]
+    I --> M["mirror pages into 2repo/arch/"]
+    F --> M
+    F -.->|"run dies partway"| X["nothing salvaged —<br/>next run is full again"]
 ```
 
 `analysis.json` is both the rendered pages' source *and* the incremental baseline — there is no separate cache file and no per-component hash check on 2repo's side. Three consequences worth internalising:

@@ -9,6 +9,29 @@ open a codebase   →  2repo ~/Work/my-repo     →  AI-ready repo context
 
 Everything runs in containers — **no Python on the host.**
 
+```mermaid
+flowchart LR
+    subgraph host["your machine — no Python installed"]
+        B["2brain"]
+        R["2repo"]
+    end
+    subgraph pod["podman-compose"]
+        S["scripts container"]
+        O["ollama container<br/>local models, GPU"]
+    end
+    P["Anthropic / OpenAI<br/>optional paid presets"]
+    V[("Obsidian vault")]
+    T[("target repo")]
+
+    B --> S
+    R --> S
+    S -->|"local-first"| O
+    S -.->|"heavier jobs"| P
+    S -->|"structured note"| V
+    S -->|"2repo/ artifacts + bridge file"| T
+    S -.->|"mirror wiki + arch pages"| V
+```
+
 ---
 
 ## Quick Start

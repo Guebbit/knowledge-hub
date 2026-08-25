@@ -99,6 +99,23 @@ The `graph` pipeline:
 
 Fail-fast rule: if required artifacts are missing, 2repo exits with error (no placeholders).
 
+```mermaid
+flowchart TD
+    CMD["bare 2repo run<br/>= graph, then wiki, then arch"] --> G["graph layer<br/>always runs"]
+    G --> W["wiki layer<br/>optional · one LLM call per file"]
+    W --> A["arch layer<br/>optional · via CodeBoarding"]
+
+    G --> IDX["repo-index.json<br/>semantic index"]
+    G --> CTX["REPO_CONTEXT.md<br/>canonical context"]
+    G --> BR["one editor bridge file<br/>CLAUDE.md / Copilot / Cursor"]
+    W --> WA["2repo/wiki/"]
+    A --> AA["2repo/arch/<br/>+ Mermaid diagrams"]
+
+    CTX --> BR
+    WA -.->|"folded back in"| IDX
+    AA -.->|"folded back in"| IDX
+```
+
 ## Generated artifacts (repo-local only)
 
 After a successful run, the target repository gets:
