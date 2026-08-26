@@ -256,6 +256,8 @@ DEFAULT_PRESET=deep              # or make it the default
 
 `2repo` can use its own defaults via `REPO_PRESET_GRAPH` and `REPO_PRESET_WIKI`. See the docs for the full preset story.
 
+> **Only have a GitHub Copilot subscription — no API key, no GPU?** You can still run `2brain` and `2repo wiki`/`query` on the Copilot CLI. See **[docs/copilot-only.md](docs/copilot-only.md)** for the setup and what the graph/arch layers need instead.
+
 ---
 
 ## ⚠️ Shared model cache
@@ -295,7 +297,7 @@ scripts/ollama.sh fix-gpu  # after a driver update/reboot, if you see "Could not
 | Model not found | `docker compose exec ollama ollama pull qwen3:8b` |
 | Note not visible in Obsidian | The command prints the path; press the vault refresh button |
 
-Full configuration reference lives in the docs: **[docs/2brain.md](docs/2brain.md)** · **[docs/2repo.md](docs/2repo.md)** · **[docs/ollama.md](docs/ollama.md)**.
+Full configuration reference lives in the docs: **[docs/2brain.md](docs/2brain.md)** · **[docs/2repo.md](docs/2repo.md)** · **[docs/presets.md](docs/presets.md)** · **[docs/ollama.md](docs/ollama.md)** · **[docs/copilot-only.md](docs/copilot-only.md)**.
 
 ## Development
 

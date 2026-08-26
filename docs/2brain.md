@@ -423,6 +423,9 @@ Both are CLI-only: they back `2brain`, `2repo wiki` and `2repo query` (the `call
 path) but **not** `2repo graph` or `2repo arch`, which drive external libraries
 (graphify / CodeBoarding) that talk to provider APIs directly and have no CLI backend.
 
+For a single-page comparison of every provider type (API vs CLI, credentials, and
+which commands each works with), see **[docs/presets.md](presets.md)**.
+
 ---
 
 See the main [README](../README.md) for installation, the shared model cache, and troubleshooting.
