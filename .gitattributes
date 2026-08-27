@@ -1,0 +1,9 @@
+# Generated files.
+#
+# The vault mirror of 2repo's wiki/architecture output is meant to be committed
+# (regenerating it costs real LLM tokens/time), so every regen touches most of
+# each file and would otherwise show up as a wall of changed prose in reviews.
+# linguist-generated collapses these in GitHub diffs. Deliberately NOT '-diff'
+# or 'diff=off' — that would suppress the textual diff locally too, and local
+# `git diff` is exactly where you want to see what a regen actually changed.
+vault/Projects/*/Generated/** linguist-generated=true

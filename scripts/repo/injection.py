@@ -165,12 +165,47 @@ def _gitattributes_block() -> str:
     ])
 
 
+def _gitignore_block() -> str:
+    """Managed .gitignore block excluding regeneration-only caches and duplicates.
+
+    Deliberately narrow: wiki/, arch/, modules/, EXECUTION.md, REPO_MEMORY.md,
+    REPO_CONTEXT.md and repo-index.json are committed on purpose (regenerating
+    them costs real LLM time/tokens, or needs 2repo/graphify installed — a
+    teammate without that tooling or a capable machine should still be able to
+    read and query them). Everything listed here only speeds up a *future*
+    regeneration and has zero value to a reader:
+      - graphify's raw graph.json/manifest.json/.graphify_* dumps — structural
+        data, not prose (see index.py's _artifact_files for why these are also
+        excluded from the semantic index, not just git)
+      - graphify's own incremental AST/semantic cache
+      - graphify's dated snapshot directories, which duplicate its live output
+      - the wiki/module incremental content-hash caches
+      - CodeBoarding's native working dir (.codeboarding/): its committed,
+        canonical copy already lives in <OUT_DIR>/arch/
+    """
+    graphify_out = config.GRAPHIFY_OUT
+    return "\n".join([
+        _HASH_MARKER_START,
+        f"{graphify_out}/cache/",
+        f"{graphify_out}/graph.json",
+        f"{graphify_out}/manifest.json",
+        f"{graphify_out}/.graphify_analysis.json",
+        f"{graphify_out}/.graphify_labels.json*",
+        f"{graphify_out}/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/",
+        f"{_OUT}/wiki/.wiki-cache.json",
+        f"{_OUT}/modules/.modules-cache.json",
+        ".codeboarding/",
+        _HASH_MARKER_END,
+    ])
+
+
 def _write_repo_hygiene(repo: Path) -> list[str]:
     """Write the ignore/attribute files the generated tree needs, in any AI target."""
     outputs: list[str] = []
     for filename, block in (
         (".graphifyignore", _graphifyignore_block()),
         (".gitattributes", _gitattributes_block()),
+        (".gitignore", _gitignore_block()),
     ):
         path = repo / filename
         if _replace_or_append(

@@ -1,6 +1,6 @@
 # 2repo — repository intelligence for AI coding sessions
 
-**What it is:** deterministic repository artifacts generated inside the repo (`2repo/*`) plus one optional editor bridge file for your selected AI target.
+**What it is:** deterministic repository artifacts generated inside the repo (`.2repo/*`) plus one optional editor bridge file for your selected AI target.
 
 **How it works:** `2repo ~/Work/my-repo` runs every layer in order — `graph`, then `wiki`, then `arch`. The graph layer reads the repo, calls graphify, and builds canonical artifacts (`GRAPH_REPORT.md`, `EXECUTION.md`, `REPO_MEMORY.md`, `repo-index.json`, `REPO_CONTEXT.md`), then writes only the selected AI bridge file (Claude/Copilot/Cursor) that points to `REPO_CONTEXT.md`. The wiki and arch layers add per-file pages and component diagrams on top, and mirror them into the Obsidian vault when one is present. Run a single layer by naming it (`2repo graph <repo>`).
 
@@ -8,7 +8,7 @@
 
 When you open a project in Claude Code (or any AI assistant), the AI starts cold — it knows nothing about your codebase. It has to read dozens of files to understand the structure, burning through its context window before you've asked a single question.
 
-With `2repo/REPO_CONTEXT.md`, the AI starts every session already knowing:
+With `.2repo/REPO_CONTEXT.md`, the AI starts every session already knowing:
 - What the repo does (purpose)
 - Which files do what (key files table)
 - How modules depend on each other (Mermaid diagram)
@@ -17,7 +17,7 @@ With `2repo/REPO_CONTEXT.md`, the AI starts every session already knowing:
 
 One canonical source. Zero duplicated AI-specific summaries. The AI is useful from the first message.
 
-**For humans too:** open `2repo/graphify-out/GRAPH_REPORT.md` and understand any repo in 30 seconds — no need to read 50 files.
+**For humans too:** open `.2repo/graphify-out/GRAPH_REPORT.md` and understand any repo in 30 seconds — no need to read 50 files.
 
 > Want the theory — how the layers combine, how incremental refresh and staleness detection actually work? See **[2repo-internals.md](2repo-internals.md)**.
 
@@ -57,7 +57,7 @@ Everything from here on is the detail behind those commands.
 
 **What it is:** semantic recall on top of generated artifacts, with durable repository memory entries.
 
-**How it works:** `2repo query <repo> "question"` retrieves ranked snippets from `2repo/*`; `2repo remember` stores durable facts/decisions/runbooks for future retrieval.
+**How it works:** `2repo query <repo> "question"` retrieves ranked snippets from `.2repo/*`; `2repo remember` stores durable facts/decisions/runbooks for future retrieval.
 
 **Why it matters for ADHD:**
 
@@ -108,8 +108,8 @@ flowchart TD
     G --> IDX["repo-index.json<br/>semantic index"]
     G --> CTX["REPO_CONTEXT.md<br/>canonical context"]
     G --> BR["one editor bridge file<br/>CLAUDE.md / Copilot / Cursor"]
-    W --> WA["2repo/wiki/"]
-    A --> AA["2repo/arch/<br/>+ Mermaid diagrams"]
+    W --> WA[".2repo/wiki/"]
+    A --> AA[".2repo/arch/<br/>+ Mermaid diagrams"]
 
     CTX --> BR
     WA -.->|"folded back in"| IDX
@@ -122,7 +122,7 @@ After a successful run, the target repository gets:
 
 ```text
 <repo>/
-├── 2repo/
+├── .2repo/
 │   ├── EXECUTION.md
 │   ├── repo-memory.json
 │   ├── REPO_MEMORY.md
@@ -146,14 +146,15 @@ After a successful run, the target repository gets:
 │   │   └── <Component>.md
 │   └── .2repo-state.json
 ├── .2repoignore               # hand-editable: which files 2repo documents
-├── .graphifyignore            # managed block: keeps 2repo/ out of the graph
-└── .gitattributes             # managed block: marks 2repo/ generated
+├── .graphifyignore            # managed block: keeps .2repo/ out of the graph
+├── .gitattributes             # managed block: marks .2repo/ generated
+└── .gitignore                 # managed block: excludes regen-only caches/dupes
 ```
 
 The tree is named after the tool that owns it. 2repo writes the execution,
 memory, index, context and wiki artifacts; CodeBoarding writes `arch/`; graphify
 gets the nested subdirectory. 2repo arranges that nesting by exporting
-`GRAPHIFY_OUT=2repo/graphify-out` to every graphify subprocess — graphify reads
+`GRAPHIFY_OUT=.2repo/graphify-out` to every graphify subprocess — graphify reads
 that env var once at import time and every one of its readers honours it.
 
 The nested directory keeps the basename `graphify-out` on purpose: graphify
@@ -174,7 +175,7 @@ block marks them `linguist-generated` so they collapse in GitHub reviews;
 `<repo>/.codeboarding/` (`analysis.json` + `fingerprint.json` + rendered pages).
 That directory is what makes incremental arch runs cheap — it is machine-owned,
 marked generated (ignored by staleness checks and never documented by the wiki),
-and its Markdown is mirrored into the indexed `2repo/arch/` copy.
+and its Markdown is mirrored into the indexed `.2repo/arch/` copy.
 
 Only one integration target is generated per run:
 
@@ -206,20 +207,21 @@ The command-line flag always beats the env var, which always beats auto-detectio
 
 | File | Objective |
 |---|---|
-| `2repo/graphify-out/GRAPH_REPORT.md` | Human + AI summary of repository structure, modules, and relationships |
-| `2repo/graphify-out/graph.json` | Raw graph data produced by graphify |
-| `2repo/EXECUTION.md` | Build/test/runbook-style operational knowledge extracted from the repo |
-| `2repo/repo-memory.json` | Durable machine-readable memory entries stored by 2repo |
-| `2repo/REPO_MEMORY.md` | Human-readable rendering of durable memory entries |
-| `2repo/repo-index.json` | Semantic retrieval index used by `2repo query` |
-| `2repo/REPO_CONTEXT.md` | Canonical context synthesized for AI assistant consumption |
-| `2repo/.2repo-state.json` | Baseline commit + metadata used for staleness checks and hooks |
-| `2repo/wiki/*.md` | Living wiki: per-file documentation pages + `OVERVIEW.md` (via `2repo wiki`) |
-| `2repo/wiki/.wiki-cache.json` | Content-hash cache enabling incremental wiki regeneration |
-| `2repo/arch/*.md` | Architecture layer: component/topic pages with Mermaid diagrams + `overview.md` (via `2repo arch`) |
+| `.2repo/graphify-out/GRAPH_REPORT.md` | Human + AI summary of repository structure, modules, and relationships |
+| `.2repo/graphify-out/graph.json` | Raw graph data produced by graphify |
+| `.2repo/EXECUTION.md` | Build/test/runbook-style operational knowledge extracted from the repo |
+| `.2repo/repo-memory.json` | Durable machine-readable memory entries stored by 2repo |
+| `.2repo/REPO_MEMORY.md` | Human-readable rendering of durable memory entries |
+| `.2repo/repo-index.json` | Semantic retrieval index used by `2repo query` |
+| `.2repo/REPO_CONTEXT.md` | Canonical context synthesized for AI assistant consumption |
+| `.2repo/.2repo-state.json` | Baseline commit + metadata used for staleness checks and hooks |
+| `.2repo/wiki/*.md` | Living wiki: per-file documentation pages + `OVERVIEW.md` (via `2repo wiki`) |
+| `.2repo/wiki/.wiki-cache.json` | Content-hash cache enabling incremental wiki regeneration |
+| `.2repo/arch/*.md` | Architecture layer: component/topic pages with Mermaid diagrams + `overview.md` (via `2repo arch`) |
 | `.codeboarding/` | CodeBoarding's native working/baseline dir (incremental baseline for `2repo arch`); machine-owned |
-| `.graphifyignore` | Managed block keeping `2repo/` and `.codeboarding/` out of graphify's source scan |
-| `.gitattributes` | Managed block marking `2repo/**` as generated so it collapses in reviews |
+| `.graphifyignore` | Managed block keeping `.2repo/` and `.codeboarding/` out of graphify's source scan |
+| `.gitattributes` | Managed block marking `.2repo/**` as generated so it collapses in reviews |
+| `.gitignore` | Managed block excluding regeneration-only caches and duplicates (graphify's raw dumps, its dated snapshot dirs, the wiki/module incremental caches, `.codeboarding/`) — everything else under `.2repo/` is committed |
 | `CLAUDE.md` | Managed block that `@`-imports `REPO_CONTEXT.md` into every Claude Code session |
 | `.github/copilot-instructions.md` | Copilot integration instructions with managed 2repo context block |
 | `.cursor/rules/2repo.mdc` | Cursor global project rule that applies 2repo context |
@@ -301,13 +303,13 @@ The command-line flag always beats the env var, which always beats auto-detectio
 
 ## Living wiki (`2repo wiki`)
 
-**What it is:** DeepWiki-style living documentation — one readable Markdown page per source file, plus a top-level `OVERVIEW.md`, written to `2repo/wiki/`. Pages describe purpose, key elements, and graph relationships so humans and AI can understand a file without reading it.
+**What it is:** DeepWiki-style living documentation — one readable Markdown page per source file, plus a top-level `OVERVIEW.md`, written to `.2repo/wiki/`. Pages describe purpose, key elements, and graph relationships so humans and AI can understand a file without reading it.
 
 **Incrementality is the core design** (this is what makes LLM documentation affordable):
 
 1. Changed files are detected via `git diff` against the `.2repo-state.json` baseline commit (or pass explicit files: `2repo wiki <repo> src/auth.ts`)
-2. The changed set expands to dependency-graph neighbors up to **2 hops** (from `2repo/graphify-out/graph.json`)
-3. A per-file content-hash cache (`2repo/wiki/.wiki-cache.json`) skips pages whose source did not change — untouched pages cost zero tokens
+2. The changed set expands to dependency-graph neighbors up to **2 hops** (from `.2repo/graphify-out/graph.json`)
+3. A per-file content-hash cache (`.2repo/wiki/.wiki-cache.json`) skips pages whose source did not change — untouched pages cost zero tokens
 4. Pages whose source file disappeared are pruned automatically
 
 Page naming replaces `/` and `.` with `_` (e.g. `src/auth/login.ts` → `src_auth_login_ts.md`).
@@ -322,9 +324,9 @@ Post-commit automation: `2repo hook` always adds a wiki refresh reminder to the 
 
 ## Architecture layer (`2repo arch`)
 
-**What it is:** the tier *above* the per-file wiki. Where `2repo wiki` writes one page per source file, `2repo arch` clusters the codebase into **components/subsystems** and writes narrative "how X works" pages plus **Mermaid architecture diagrams** — the two things the file-by-file wiki cannot give you. Output lands in `2repo/arch/` (`overview.md` + one page per component).
+**What it is:** the tier *above* the per-file wiki. Where `2repo wiki` writes one page per source file, `2repo arch` clusters the codebase into **components/subsystems** and writes narrative "how X works" pages plus **Mermaid architecture diagrams** — the two things the file-by-file wiki cannot give you. Output lands in `.2repo/arch/` (`overview.md` + one page per component).
 
-**How it works:** it delegates to [CodeBoarding](https://github.com/CodeBoarding/CodeBoarding) (MIT) — static analysis (language servers) + LLM reasoning → Mermaid diagrams + component Markdown. 2repo runs it behind a thin adapter, then mirrors the rendered Markdown into `2repo/arch/` so the pages fold into the semantic index (`2repo query` retrieves them) and are referenced from `REPO_CONTEXT.md`.
+**How it works:** it delegates to [CodeBoarding](https://github.com/CodeBoarding/CodeBoarding) (MIT) — static analysis (language servers) + LLM reasoning → Mermaid diagrams + component Markdown. 2repo runs it behind a thin adapter, then mirrors the rendered Markdown into `.2repo/arch/` so the pages fold into the semantic index (`2repo query` retrieves them) and are referenced from `REPO_CONTEXT.md`.
 
 **Incrementality:** CodeBoarding keeps a baseline in `<repo>/.codeboarding/` (`analysis.json` + `fingerprint.json`). When that baseline exists, `2repo arch` runs an incremental re-analysis of only the changed parts; otherwise (or with `--force-all`) it runs a full analysis. `--dry-run` reports which mode would run without any LLM calls.
 
@@ -336,7 +338,7 @@ Like the wiki, the architecture layer is **opt-in and expensive** (never run by 
 
 > Swappable by design: if CodeBoarding is ever abandoned, only two helpers in `scripts/repo/arch.py` (`_run_codeboarding` and `_codeboarding_dir`) know the tool — replace them with another generator that emits Markdown into `<repo>/.codeboarding/` and the rest (indexing, context, CLI) is unchanged.
 
-## Module tier (`2repo/modules/`)
+## Module tier (`.2repo/modules/`)
 
 **What it is:** one note per meaningful directory — the tier between the per-file wiki and the whole-repo architecture view. This is what you read, and the only wiki-side output mirrored into the Obsidian vault.
 
@@ -388,9 +390,9 @@ vault/Projects/<repo-name>/
     └── Architecture/          # CodeBoarding component pages + Mermaid diagrams
 ```
 
-Per-file wiki pages are **not** mirrored: they stay in `<repo>/2repo/wiki/` where the AI reads them. Earlier versions did mirror them flat into `Generated/`; the next wiki run clears that legacy output automatically and reports how many notes it removed.
+Per-file wiki pages are **not** mirrored: they stay in `<repo>/.2repo/wiki/` where the AI reads them. Earlier versions did mirror them flat into `Generated/`; the next wiki run clears that legacy output automatically and reports how many notes it removed.
 
-**The mirror is exact, both directions.** `Generated/Modules/` and `Generated/Architecture/` are re-synced from `2repo/modules/` and `2repo/arch/` on every `wiki`/`arch` run: changed notes are re-copied, and any vault note whose source note no longer exists is deleted — not just skipped. So removing a module (delete its files, or narrow `.2repoignore` until it has none left) removes that module's page from `2repo/modules/` *and* from the vault on the next run; editing a file updates its module's note in both places the same way. As with per-file pruning, this only fires once the **graph** layer has seen the change — run a bare `2repo <repo>` (or `2repo graph <repo>` first) rather than `2repo wiki <repo>` alone after deleting or renaming files.
+**The mirror is exact, both directions.** `Generated/Modules/` and `Generated/Architecture/` are re-synced from `.2repo/modules/` and `.2repo/arch/` on every `wiki`/`arch` run: changed notes are re-copied, and any vault note whose source note no longer exists is deleted — not just skipped. So removing a module (delete its files, or narrow `.2repoignore` until it has none left) removes that module's page from `.2repo/modules/` *and* from the vault on the next run; editing a file updates its module's note in both places the same way. As with per-file pruning, this only fires once the **graph** layer has seen the change — run a bare `2repo <repo>` (or `2repo graph <repo>` first) rather than `2repo wiki <repo>` alone after deleting or renaming files.
 
 
 ## Re-running: what recomputes, what is cached
@@ -399,9 +401,9 @@ Per-file wiki pages are **not** mirrored: they stay in `<repo>/2repo/wiki/` wher
 
 | Layer | Cached in | Re-runs when |
 |---|---|---|
-| Graph | `2repo/graphify-out/manifest.json` | a file changed (delegated to `graphify update`) |
-| Wiki | `2repo/wiki/.wiki-cache.json` | the source file's SHA-256 changed, or the page is missing |
-| Modules | `2repo/modules/.modules-cache.json` | any per-file page inside the module changed, or its file set moved |
+| Graph | `.2repo/graphify-out/manifest.json` | a file changed (delegated to `graphify update`) |
+| Wiki | `.2repo/wiki/.wiki-cache.json` | the source file's SHA-256 changed, or the page is missing |
+| Modules | `.2repo/modules/.modules-cache.json` | any per-file page inside the module changed, or its file set moved |
 | Arch | `.codeboarding/analysis.json` | every arch run (incremental if the baseline exists, full otherwise) |
 | Execution / Memory / Index / Context / Injection | *(not cached)* | always — they are free |
 
@@ -418,7 +420,7 @@ Per-file wiki pages are **not** mirrored: they stay in `<repo>/2repo/wiki/` wher
 
 `repo-index.json` stores chunked vectors from:
 
-- `2repo/*` textual artifacts
+- `.2repo/*` textual artifacts
 - runtime metadata
 - persisted repo memory entries
 
@@ -426,7 +428,7 @@ Querying uses cosine similarity over TF-IDF vectors plus query expansion from to
 
 ## State model
 
-2repo writes `2repo/.2repo-state.json` with:
+2repo writes `.2repo/.2repo-state.json` with:
 
 - baseline git commit (`head`)
 - stale threshold (`threshold`)
@@ -438,7 +440,7 @@ Querying uses cosine similarity over TF-IDF vectors plus query expansion from to
 
 All integrations use one canonical source:
 
-- `2repo/REPO_CONTEXT.md`
+- `.2repo/REPO_CONTEXT.md`
 
 When `--ai-target` is not passed, 2repo prompts a small CLI selection (non-interactive runs default to `neutral`):
 
