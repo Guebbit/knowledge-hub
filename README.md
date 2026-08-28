@@ -95,7 +95,7 @@ Each layer is also callable on its own (`2repo graph`, `2repo wiki`, `2repo arch
 
 On the first run per repository, 2repo asks which paths to document — include (blank = everything) and exclude (blank = nothing), as gitignore-style patterns like `**/*.test.ts`. The answer is saved to `.2repoignore` in that repo and is editable by hand; `--include` / `--exclude` / `--rescope` set it from the command line.
 
-→ **Full pipeline, subcommands, examples: [docs/2repo.md](docs/2repo.md)**
+→ **New here? Start with [docs/2repo-why.md](docs/2repo-why.md)** — why to run it and what it costs. Full pipeline, subcommands, examples: **[docs/2repo.md](docs/2repo.md)**
 
 ---
 

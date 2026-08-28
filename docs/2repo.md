@@ -19,7 +19,7 @@ One canonical source. Zero duplicated AI-specific summaries. The AI is useful fr
 
 **For humans too:** open `.2repo/graphify-out/GRAPH_REPORT.md` and understand any repo in 30 seconds — no need to read 50 files.
 
-> Want the theory — how the layers combine, how incremental refresh and staleness detection actually work? See **[2repo-internals.md](2repo-internals.md)**.
+> Want the short version first — why to run this and what it actually costs? See **[2repo-why.md](2repo-why.md)**. Want the theory — how the layers combine, how incremental refresh and staleness detection actually work? See **[2repo-internals.md](2repo-internals.md)**.
 
 ---
 
