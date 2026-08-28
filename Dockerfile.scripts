@@ -55,3 +55,19 @@ RUN python -m venv /opt/codeboarding \
     && ln -s /opt/codeboarding/bin/codeboarding /usr/local/bin/codeboarding \
     && ln -s /opt/codeboarding/bin/codeboarding-setup /usr/local/bin/codeboarding-setup \
     && codeboarding-setup
+
+# Build-time patches to the vendored CodeBoarding (0.13.8) — things a local,
+# resource-limited model needs that upstream offers no knob for:
+#   • agent-invocation timeout from env (CODEBOARDING_AGENT_TIMEOUT_FIRST/_RETRY;
+#     upstream hardcodes 300s/600s and each retry restarts from scratch);
+#   • a context-window budget middleware so tool results can never push the
+#     agent's conversation past the model's real window (CODEBOARDING_CONTEXT_WINDOW;
+#     Ollama otherwise silently truncates the prompt → empty answers → 5 retries);
+#   • readFile chunk size from env (CODEBOARDING_READ_FILE_LINES; upstream is 300).
+# repo/arch.py sets all of these per run; every default is the stock value, so
+# behaviour is unchanged unless 2repo opts in. Each patch is an exact-text
+# replacement that must match once — see patches/codeboarding/apply.py — so a
+# future codeboarding release that moves an anchor fails the build loudly here
+# instead of silently shipping the unpatched behaviour.
+COPY patches/codeboarding /opt/codeboarding-patches
+RUN /opt/codeboarding/bin/python /opt/codeboarding-patches/apply.py

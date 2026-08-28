@@ -14,10 +14,13 @@ services:
       OLLAMA_NUM_THREADS: ${OLLAMA_NUM_THREADS:-1}
       # Keep models loaded for 5 minutes after the last request
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-5m}
-      # Global context length for all models.
-      # Match this to OLLAMA_CONTEXT_WINDOW in .env.
+      # Global context length for all models, from OLLAMA_NUM_CTX in .env.
+      # OLLAMA_CONTEXT_LENGTH is the variable the Ollama server actually reads
+      # (it ignores OLLAMA_NUM_CTX, and would fall back to its own VRAM-based
+      # default). The same .env value is handed to the scripts container so
+      # 2repo budgets its prompts against the window the server really runs.
       # Safe for 24 GB VRAM (RTX 4090) with 8B–14B models.
-      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-32000}
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_NUM_CTX:-32000}
     volumes:
       # Shared model cache — host path so models survive container rebuilds.
       # Treat as read-only from the host; writes happen inside the container.
@@ -32,9 +35,9 @@ services:
       retries: 3
       start_period: 40s
     # Resource limits — adjust to your hardware (machine has 32 GB RAM / 16 cores)
-    mem_limit: 16g
-    shm_size: 8g
-    cpus: '8.0'
+    mem_limit: ${OLLAMA_MEM_LIMIT:-16g}
+    shm_size: ${OLLAMA_SHM_SIZE:-8g}
+    cpus: '${OLLAMA_CPUS:-8.0}'
     devices:
       - nvidia.com/gpu=all
     security_opt:
@@ -71,6 +74,9 @@ services:
       # Graphify requires a non-empty value when OLLAMA_BASE_URL points to a
       # non-localhost host (docker service name). Ollama ignores auth entirely.
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-local}
+      # Must equal the ollama service's OLLAMA_CONTEXT_LENGTH above: 2repo arch
+      # uses it to keep CodeBoarding's prompts inside the server's real window.
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-32000}
       DEFAULT_PRESET: ${DEFAULT_PRESET:-fast}
       PRESET_FAST: ${PRESET_FAST:-ollama:qwen3:8b}
       PRESET_DEEP: ${PRESET_DEEP:-openai:gpt-4o}
@@ -89,6 +95,8 @@ services:
       REPO_PRESET_GRAPH: ${REPO_PRESET_GRAPH:-deep}
       REPO_PRESET_WIKI: ${REPO_PRESET_WIKI:-}
       REPO_PRESET_ARCH: ${REPO_PRESET_ARCH:-}
+      REPO_ARCH_AGENT_TIMEOUT: ${REPO_ARCH_AGENT_TIMEOUT:-}
+      REPO_ARCH_CONTEXT_TOKENS: ${REPO_ARCH_CONTEXT_TOKENS:-}
       REPO_AI_TARGET: ${REPO_AI_TARGET:-}
       REPO_STALE_THRESHOLD: ${REPO_STALE_THRESHOLD:-5}
       REPO_WIKI_AUTO: ${REPO_WIKI_AUTO:-}

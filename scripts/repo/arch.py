@@ -47,8 +47,21 @@ from shared import config
 
 _ARCH_SUBPATH = Path(config.OUT_DIR) / "arch"
 _CODEBOARDING_SUBPATH = Path(".codeboarding")
-# CodeBoarding's incremental baseline; its presence means a prior run exists.
+# CodeBoarding's incremental baseline.
 _BASELINE_FILENAME = "analysis.json"
+# CodeBoarding only writes this sidecar when a full analysis completes
+# successfully (see repo_utils/fingerprint_diff.py in the vendored package).
+# analysis.json alone is NOT proof of a usable baseline — CodeBoarding
+# overwrites it at intermediate checkpoints during the abstraction pipeline,
+# so a run killed mid-way (Ctrl-C, OOM, timeout) leaves a partial analysis.json
+# behind with no fingerprint. Treating that as a valid baseline makes 2repo
+# pick "incremental" mode, which CodeBoarding itself then can't actually do
+# (it logs `requiresFullAnalysis: true`) — but instead of failing, it silently
+# renders a degraded/garbage result from the stale snapshot and exits 0.
+# Requiring both files closes that hole: no fingerprint means no baseline, so
+# a killed run correctly falls back to a full re-analysis instead of
+# corrupting the output.
+_FINGERPRINT_FILENAME = "fingerprint.json"
 
 # Provider-credential environment variables CodeBoarding may read. We strip ALL of
 # them from the child environment and then set only the selected provider's — the
@@ -122,7 +135,8 @@ def _codeboarding_dir(repo_path: str) -> Path:
 
 
 def _has_baseline(repo_path: str) -> bool:
-    return (_codeboarding_dir(repo_path) / _BASELINE_FILENAME).is_file()
+    cb_dir = _codeboarding_dir(repo_path)
+    return (cb_dir / _BASELINE_FILENAME).is_file() and (cb_dir / _FINGERPRINT_FILENAME).is_file()
 
 
 def _provider_env(provider: str, model: str) -> dict[str, str]:
@@ -177,7 +191,65 @@ def _provider_env(provider: str, model: str) -> dict[str, str]:
     # the resolved preset model so the whole run uses a single, predictable model.
     env["AGENT_MODEL"] = model
     env["PARSING_MODEL"] = model
+
+    # CodeBoarding hardcodes its agent-invocation timeout (300s first attempt,
+    # 600s on retry) with no native override — see Dockerfile.scripts for the
+    # build-time patch that makes it read these two env vars instead. A slow
+    # local model needs more headroom than that; since retries restart the same
+    # reasoning chain from scratch, one generous attempt beats five short ones.
+    agent_timeout = os.getenv("REPO_ARCH_AGENT_TIMEOUT")
+    if agent_timeout:
+        env["CODEBOARDING_AGENT_TIMEOUT_FIRST"] = agent_timeout
+        env["CODEBOARDING_AGENT_TIMEOUT_RETRY"] = agent_timeout
+
+    # Context-window budget (see patches/codeboarding/context_budget.py). CodeBoarding
+    # asks Ollama for the model's context length and gets the *architectural* max
+    # (262k for a Qwen-class model), not the window the server actually runs
+    # (OLLAMA_NUM_CTX) — and it never budgets against either. Its tool loop keeps
+    # appending file reads until the prompt overflows; Ollama then silently drops
+    # the oldest tokens (the task itself) and the turn fails, which CodeBoarding
+    # retries from scratch up to 5×. Tell it the real window so the patched agent
+    # stops reading before the overflow and reads in chunks sized for it.
+    window = _context_window(provider)
+    if window:
+        env["CODEBOARDING_CONTEXT_WINDOW"] = str(window)
+        env["CODEBOARDING_READ_FILE_LINES"] = str(_read_chunk_lines(window))
+
     return env
+
+
+def _context_window(provider: str) -> int | None:
+    """Usable context window for the arch run, in tokens.
+
+    REPO_ARCH_CONTEXT_TOKENS wins when set (any provider; 0 disables the budget).
+    Otherwise Ollama presets use OLLAMA_NUM_CTX — the only party that knows the
+    server-side window is our own .env. Cloud providers get None: their windows
+    are large and CodeBoarding's own catalogs describe them correctly.
+    """
+    raw = os.getenv("REPO_ARCH_CONTEXT_TOKENS", "").strip()
+    if raw:
+        if not raw.isdigit():
+            raise ValueError(f"REPO_ARCH_CONTEXT_TOKENS must be a whole number of tokens, got {raw!r}")
+        return int(raw) or None
+    if provider == "ollama":
+        return config.OLLAMA_NUM_CTX
+    return None
+
+
+# CodeBoarding's readFile returns 300 lines per call. At ~270 tokens per 100
+# numbered lines of code, that is ~1/10 of a 32k window per read — a handful of
+# reads fill the conversation before the agent has reasoned about anything.
+# Scale the chunk with the window (120 lines at 32k, 240 at 64k, stock 300
+# from ~80k up) so a small window buys more, smaller reads instead of fewer,
+# mostly-unused big ones. Never below 60: a chunk smaller than a typical
+# function is useless for the "look at this implementation" reads the tool is for.
+_READ_CHUNK_MAX_LINES = 300
+_READ_CHUNK_MIN_LINES = 60
+_READ_CHUNK_TOKENS_PER_LINE = 270
+
+
+def _read_chunk_lines(window: int) -> int:
+    return max(_READ_CHUNK_MIN_LINES, min(_READ_CHUNK_MAX_LINES, window // _READ_CHUNK_TOKENS_PER_LINE))
 
 
 def _codeboarding_python() -> str:
