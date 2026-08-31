@@ -100,16 +100,21 @@ _PROVIDER_ENV_KEYS = (
     "PARSING_MODEL",
 )
 
-# Inline renderer: CodeBoarding 0.13.8's `--local` analysis writes only analysis.json
-# (the remote path renders Markdown, the local path does not), and the version ships
+# Inline renderer: CodeBoarding's `--local` analysis writes only analysis.json
+# (the remote path renders Markdown, the local path does not), and the package ships
 # no `codeboarding-render` console script. So we drive render_docs() ourselves, in
 # CodeBoarding's own venv interpreter (its workflow packages aren't importable from
 # the scripts interpreter). This is the one render-shaped detail that would change if
 # CodeBoarding is ever swapped out — kept beside _run_codeboarding on purpose.
+#
+# render_docs() lived at codeboarding_workflows.rendering through 0.13.8; 0.13.10
+# moved it to output_generators.rendering with the same signature, no announced
+# deprecation path. Since codeboarding is pinned (see Dockerfile.scripts), this only
+# needs updating on a deliberate version bump — re-check this import when you bump it.
 _RENDER_SCRIPT = """\
 import sys
 from pathlib import Path
-from codeboarding_workflows.rendering import render_docs
+from output_generators.rendering import render_docs
 
 analysis_path, out_dir, repo_name = sys.argv[1], sys.argv[2], sys.argv[3]
 render_docs(
@@ -296,11 +301,46 @@ def _render_markdown(repo_path: str, env: dict[str, str]) -> None:
         )
 
 
-def _run_codeboarding(repo_path: str, *, provider: str, model: str, incremental: bool) -> None:
+# CodeBoarding can decide mid-incremental-run that its own baseline is unusable (its
+# static-analysis cache is versioned separately from analysis.json/fingerprint.json,
+# e.g. after a codeboarding upgrade) and abort — but it reports that by printing this
+# structured payload and still exiting 0, not via a non-zero return code. A bare
+# returncode check misses it entirely and would go on to render the old, untouched
+# analysis.json as if the run had succeeded. Match on the payload text rather than
+# json.loads-ing a line: CodeBoarding pretty-prints it (multi-line), interleaved with
+# unrelated progress output, so there is no single "the JSON is this one line" to parse.
+_REQUIRES_FULL_ANALYSIS_RE = re.compile(r'"requiresFullAnalysis"\s*:\s*true')
+
+
+def _requires_full_analysis(output: str) -> bool:
+    return bool(_REQUIRES_FULL_ANALYSIS_RE.search(output))
+
+
+def _run_codeboarding_once(cmd: list[str], repo_path: str, env: dict[str, str]) -> tuple[int, str]:
+    """Run one codeboarding subprocess, streaming its output live while also capturing it.
+
+    Live streaming matters: a run can take many minutes and CodeBoarding prints its own
+    progress (module/page counters, ETAs). Capturing is needed for _requires_full_analysis.
+    """
+    proc = subprocess.Popen(
+        cmd, cwd=repo_path, env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+    )
+    lines: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(line, end="")
+        lines.append(line)
+    return proc.wait(), "".join(lines)
+
+
+def _run_codeboarding(repo_path: str, *, provider: str, model: str, incremental: bool) -> str:
     """Invoke the CodeBoarding CLI (the only place that knows the tool's interface).
 
     Writes native output to <repo>/.codeboarding/ (analysis.json baseline), then
     renders it to Markdown in the same directory. Raises RuntimeError on failure.
+    Returns the mode actually run ("incremental" or "full") — may differ from the
+    requested mode when an incremental attempt falls back to full, see below.
     """
     env = _provider_env(provider, model)
     mode = "incremental" if incremental else "full"
@@ -308,13 +348,24 @@ def _run_codeboarding(repo_path: str, *, provider: str, model: str, incremental:
     # writes analysis.json only; Markdown is rendered by _render_markdown below.
     cmd = ["codeboarding", mode, "--local", repo_path]
     print(f"Arch     : codeboarding {mode}  provider={provider}  model={model}")
-    proc = subprocess.run(cmd, cwd=repo_path, env=env)
-    if proc.returncode != 0:
+    returncode, output = _run_codeboarding_once(cmd, repo_path, env)
+
+    if incremental and _requires_full_analysis(output):
+        print(
+            "Arch     : codeboarding's incremental baseline is stale or was written by "
+            "a different engine version — retrying as a full analysis"
+        )
+        mode = "full"
+        cmd = ["codeboarding", mode, "--local", repo_path]
+        returncode, output = _run_codeboarding_once(cmd, repo_path, env)
+
+    if returncode != 0:
         raise RuntimeError(
-            f"codeboarding {mode} exited with code {proc.returncode} — "
+            f"codeboarding {mode} exited with code {returncode} — "
             "see output above (check the provider credential/model and language-server setup)"
         )
     _render_markdown(repo_path, env)
+    return mode
 
 
 def _rendered_pages(repo_path: str) -> list[Path]:
@@ -415,9 +466,9 @@ def generate(
     back to a full analysis otherwise or when force_all is set.
     """
     incremental = _has_baseline(repo_path) and not force_all
-    mode = "incremental" if incremental else "full"
 
     if dry_run:
+        mode = "incremental" if incremental else "full"
         reason = (
             "baseline present" if incremental
             else ("--force-all" if force_all else "no baseline yet")
@@ -425,7 +476,9 @@ def generate(
         print(f"Arch     : would run codeboarding {mode} ({reason}) — no LLM calls made")
         return {"artifact": str(_ARCH_SUBPATH), "dry_run": True, "mode": mode}
 
-    _run_codeboarding(repo_path, provider=provider, model=model, incremental=incremental)
+    # May run "full" even when incremental was requested — see _run_codeboarding's
+    # stale-baseline fallback — so the summary reflects what actually ran.
+    mode = _run_codeboarding(repo_path, provider=provider, model=model, incremental=incremental)
 
     written, removed = _mirror_pages(repo_path)
     if not written:

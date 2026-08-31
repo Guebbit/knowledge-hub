@@ -45,18 +45,29 @@ ENV CODEBOARDING_TELEMETRY=false \
 # the Python/TS/JS/PHP language servers. This version renders Markdown via the
 # render_docs() Python API (repo/arch.py drives it in this venv), not a CLI flag.
 # `tqdm` is imported by codeboarding_cli/commands/full_analysis.py but missing
-# from the wheel's declared dependencies (0.13.8), so every `codeboarding`
-# invocation dies with ModuleNotFoundError before it parses argv. Install it
-# alongside; drop this once upstream declares it.
+# from the wheel's declared dependencies (still true at 0.13.10), so every
+# `codeboarding` invocation dies with ModuleNotFoundError before it parses
+# argv. Install it alongside; drop this once upstream declares it.
+#
+# Pinned deliberately, not left to float: an earlier unpinned install silently
+# drifted from 0.13.8 to 0.13.10 on a routine rebuild, which renamed
+# codeboarding_workflows.rendering (imported by arch.py's _RENDER_SCRIPT) to
+# output_generators.rendering AND bumped the static-analysis cache format,
+# making every existing <repo>/.codeboarding/ baseline unreadable for
+# incremental runs. Both are accounted for at 0.13.10 (render import updated,
+# stale baselines auto-fall-back to a full run — see arch.py); the
+# patches/codeboarding/apply.py anchors were also re-verified against this
+# version. Bump deliberately in the future (re-check the render import and
+# patch anchors) rather than letting pip pick a version for you.
 RUN python -m venv /opt/codeboarding \
     && /opt/codeboarding/bin/pip install --no-cache-dir \
-        codeboarding --extra-index-url https://pip.codeboarding.org/simple/ \
+        "codeboarding==0.13.10" --extra-index-url https://pip.codeboarding.org/simple/ \
     && /opt/codeboarding/bin/pip install --no-cache-dir tqdm \
     && ln -s /opt/codeboarding/bin/codeboarding /usr/local/bin/codeboarding \
     && ln -s /opt/codeboarding/bin/codeboarding-setup /usr/local/bin/codeboarding-setup \
     && codeboarding-setup
 
-# Build-time patches to the vendored CodeBoarding (0.13.8) — things a local,
+# Build-time patches to the vendored CodeBoarding (0.13.10) — things a local,
 # resource-limited model needs that upstream offers no knob for:
 #   • agent-invocation timeout from env (CODEBOARDING_AGENT_TIMEOUT_FIRST/_RETRY;
 #     upstream hardcodes 300s/600s and each retry restarts from scratch);

@@ -86,3 +86,31 @@ class TestContextWindow:
         assert arch._read_chunk_lines(65536) == 242
         assert arch._read_chunk_lines(128000) == 300  # stock size from ~80k up
         assert arch._read_chunk_lines(4096) == 60  # never below a function's worth
+
+
+class TestRequiresFullAnalysis:
+    """CodeBoarding can abort an incremental run (e.g. an engine-version-incompatible
+    static-analysis cache) and still exit 0, signalling failure only via this
+    pretty-printed JSON payload interleaved with unrelated progress output.
+    """
+
+    def test_detects_pretty_printed_payload(self):
+        output = (
+            "Modules  : [30/30] tests/unit/  (17 files)\n"
+            "Traceback (most recent call last):\n"
+            "  ...\n"
+            "static_analyzer.StaticAnalysisFatalError: ...\n"
+            "{\n"
+            '  "error": "...",\n'
+            '  "mode": "incremental",\n'
+            '  "requiresFullAnalysis": true\n'
+            "}\n"
+        )
+        assert arch._requires_full_analysis(output) is True
+
+    def test_false_when_absent(self):
+        assert arch._requires_full_analysis("Arch     : wrote overview.md\n") is False
+
+    def test_false_when_flag_is_false(self):
+        output = '{\n  "mode": "incremental",\n  "requiresFullAnalysis": false\n}\n'
+        assert arch._requires_full_analysis(output) is False

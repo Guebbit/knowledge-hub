@@ -11,7 +11,7 @@ here instead of silently shipping the stock behaviour — the same guarantee the
 old `sed ... && grep -q` chain gave, in one readable place. Re-running on an
 already patched tree is a no-op.
 
-Patches (CodeBoarding 0.13.8):
+Patches (anchors verified against CodeBoarding 0.13.8 and 0.13.10):
 
 1. agents/agent.py — agent-invocation timeout from env.
    CodeBoarding hardcodes 300s for the first attempt and 600s on retry with no
