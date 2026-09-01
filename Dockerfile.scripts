@@ -31,6 +31,20 @@ RUN pip install --no-cache-dir \
     pathspec \
     graphifyy==0.9.13
 
+# graphifyy's dedup step drops the second of two same-ID nodes extracted from
+# different source files and recommends running `graphify extract` per
+# subfolder + `graphify merge-graphs` to avoid it — wrong for a single-repo
+# pipeline, since graphify's cross-file edge detection only sees files within
+# one extract invocation, so per-subfolder extraction would silently drop
+# every edge between files in different subfolders. See
+# patches/graphify/apply.py and vault/Guides/graphify.md for the full
+# rationale; this is an exact-text replacement that must match once, so a
+# future graphifyy release that moves the anchor fails the build loudly here
+# instead of silently reverting to the unpatched (data-preserving-but-noisy)
+# behaviour.
+COPY patches/graphify /opt/graphify-patches
+RUN python /opt/graphify-patches/apply.py
+
 # CodeBoarding — backs the `2repo arch` layer (component docs + Mermaid diagrams).
 # Never phone home: 2repo is local-first, so disable CodeBoarding telemetry for
 # every invocation, including the build-time setup below (repo/arch.py also sets
