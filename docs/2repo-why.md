@@ -6,34 +6,41 @@
 
 Only two of the three layers are — and only on the first run.
 
-| Layer | Cost | Why |
-|---|---|---|
-| `graph` | cheap — seconds, ~no LLM calls | static analysis (graphify) + deterministic file scans |
-| `wiki` | expensive on first run | one LLM call per source file |
-| `arch` | expensive on first run | one full LLM-backed analysis of how components fit together |
+| Layer | Cost | How | Why |
+|---|---|---|---|
+| `graph` | cheap — seconds, ~no LLM calls | static analysis (graphify) + deterministic file scans → `REPO_CONTEXT.md` | so every AI session starts already oriented instead of re-discovering the repo from scratch |
+| `wiki` | expensive on first run | one LLM call per source file → one page per file | so files are understood once instead of re-read every time |
+| `arch` | expensive on first run | one LLM-backed analysis (CodeBoarding) → component pages + Mermaid diagrams | so you can see how the whole system fits together, not just one file at a time |
 
 After the first run, `wiki` and `arch` are incremental: `wiki` only regenerates pages for files that changed since last time (an unchanged file is a cache hit — zero tokens), and `arch` only re-analyzes what changed. A repeat `2repo <repo>` run on an otherwise-untouched repo is close to free.
 
 > Not sure it's worth it yet? Run `2repo graph <repo>` alone first. It's cheap and gives you `GRAPH_REPORT.md` — readable in 30 seconds. Add `wiki` and `arch` once you actually want file-level or system-level detail, not before.
 
-## What each layer gives you
+## Why each layer matters
 
-### `graph` — the map (always cheap, always runs first)
-Extracts the dependency graph and writes `REPO_CONTEXT.md`: purpose, key files, how modules depend on each other, conventions, how to build/test/run. This is what gets injected into `CLAUDE.md` (or Copilot/Cursor).
+### `graph`
+Without it, every AI session — including your very next one — burns its own context window re-discovering the repo's shape before it can do anything useful: what files exist, what depends on what, how to build and run it. That rediscovery happens *every single time you open the repo*, in every tool, forever, unless something writes it down once.
 
-**Without it:** every AI session burns its own context window re-discovering this from scratch, every single time you open the repo.
+`REPO_CONTEXT.md` is that write-down. The graph layer pays the discovery cost once (and near-free after that, since it's incremental), and every session after — Claude Code, Copilot, Cursor, or a human — starts already oriented instead of exploring first and helping second.
 
-### `wiki` — the per-file explanation (expensive once, opt-in)
-One readable page per source file: purpose, key elements, how it connects to the rest of the graph. Written so an AI — or you — never has to open the raw file to know what it does.
+It pays off outside AI sessions too: open `GRAPH_REPORT.md` and understand an unfamiliar repo in about 30 seconds instead of clicking through 50 files. That's just as useful the first time you touch a coworker's codebase as it is re-opening your own project after months away — the graph doesn't forget what you did, even if you did.
 
-**Without it:** understanding a file means opening and reading it, every time, for every file.
+### `wiki`
+Without it, knowing what a specific file does means opening it and reading it — every time, for every file, whether it's you or the AI doing the reading. On a repo of any size that's a lot of repeated re-reading: the same auth helper re-parsed from scratch in five different sessions because nothing remembered what it learned last time.
 
-### `arch` — the system-level picture (expensive once, opt-in)
-Groups files into components/subsystems and writes narrative "how X works" pages plus Mermaid diagrams of how they connect. This is the layer above the wiki: the wiki tells you what one file does, `arch` tells you how the pieces work together.
+The wiki front-loads that reading. Each page is written once, by an LLM, and then reused for free until the file changes (a cache hit costs zero tokens). An AI assistant retrieves the finished summary instead of spending its context window re-parsing implementation details; you can skim a page in seconds instead of tracing through code you don't currently need to touch. This pays off most on files you touch rarely — the ones you'd otherwise have to "re-learn" cold every time you come back to them, which is exactly the kind of repeated cognitive reload that's expensive to redo and cheap to just have written down.
 
-**Without it:** you can see individual trees but not the shape of the forest.
+**Where to actually read it.** Three ways, depending on what you want:
+- **The raw pages** — `<repo>/.2repo/wiki/*.md`, one plain Markdown file per source file, plus a top-level `OVERVIEW.md`. Open any of them directly, no tooling required.
+- **`2repo query <repo> "question"`** — semantic retrieval over the wiki (plus the graph and memory), when you want an answer instead of a page to browse.
+- **The Obsidian vault** — *not* the raw per-file pages. One page per file is the right granularity for retrieval and the wrong one for a human to browse (a 430-file repo would be 430 disconnected notes), so what actually lands in `vault/Projects/<repo-name>/Generated/Modules/` is the synthesized **module tier**: one note per meaningful directory, built from the per-file pages and linked along the real dependency graph. That's the human-readable digest; the per-file pages stay repo-side for machine retrieval.
 
-## How they fit together
+### `arch`
+Without it, you can inspect any single file (via the wiki) but there's nothing that shows how a change in one place ripples through the rest of the system, or that lets you explain the codebase's shape to someone else without drawing the diagram yourself, from memory, on the spot. You can see individual trees but not the shape of the forest — and "how does this whole thing fit together" is not a question any single file's wiki page can answer.
+
+`arch` answers that question directly: narrative pages per component plus Mermaid diagrams of how components connect, generated from real static analysis rather than a best guess. That's the artifact you reach for during onboarding (new person, or new-to-you codebase), before a large refactor (what else touches this?), or any time the question moves from "what does this file do" to "what happens if I change this."
+
+## How the layers connect
 
 ```
 graph  →  wiki  →  arch
