@@ -1,10 +1,10 @@
 # knowledge-hub
 
-Two commands that externalize memory. Local-first (Ollama), with optional paid Anthropic/OpenAI presets for heavier jobs.
+One command, two modes, that externalize memory. Local-first (Ollama), with optional paid Anthropic/OpenAI presets for heavier jobs.
 
 ```
-learn something   →  2brain "topic"          →  structured note in Obsidian
-open a codebase   →  2repo ~/Work/my-repo     →  AI-ready repo context
+learn something   →  2brain -q "topic"        →  structured note in Obsidian
+open a codebase   →  2brain ~/Work/my-repo     →  AI-ready repo context
 ```
 
 Everything runs in containers — **no Python on the host.**
@@ -13,7 +13,6 @@ Everything runs in containers — **no Python on the host.**
 flowchart LR
     subgraph host["your machine — no Python installed"]
         B["2brain"]
-        R["2repo"]
     end
     subgraph pod["podman-compose"]
         S["scripts container"]
@@ -24,11 +23,10 @@ flowchart LR
     T[("target repo")]
 
     B --> S
-    R --> S
     S -->|"local-first"| O
     S -.->|"heavier jobs"| P
     S -->|"structured note"| V
-    S -->|"2repo/ artifacts + bridge file"| T
+    S -->|"2brain/ artifacts + bridge file"| T
     S -.->|"mirror wiki + arch pages"| V
 ```
 
@@ -45,57 +43,55 @@ cd ~/knowledge-hub
 cp .env-example .env
 # Edit .env — set LINUX_USERNAME (or OPENAI_API_KEY for cloud presets)
 
-# 3. Register the two commands (one-time)
+# 3. Register the command (one-time)
 #    Add to ~/.bashrc or ~/.zshrc:
 echo 'export KNOWLEDGE_HUB="$HOME/knowledge-hub"' >> ~/.bashrc
 echo 'alias 2brain="$KNOWLEDGE_HUB/scripts/2brain.sh"' >> ~/.bashrc
-echo 'alias 2repo="$KNOWLEDGE_HUB/scripts/2repo.sh"'   >> ~/.bashrc
 source ~/.bashrc
 
 # 4. Build the container image
 docker compose build
 
 # 5. Verify
-2brain --version   # → knowledge-hub 0.1.0
-2repo --version    # → knowledge-hub 0.1.0
+2brain --version   # → knowledge-hub 0.2.0
 
 # 6. First run
-2brain "my first note"
-2repo /path/to/some/repo
+2brain -q "my first note"
+2brain /path/to/some/repo
 ```
 
 > Windows users: skip to **[Installing the commands (Windows)](#windowspowershell)** below.
 
 ---
 
-## What the two commands do
+## What `2brain` does
 
-### `2brain` — your second brain
-Type `2brain "what I just figured out"` and an AI writes a clean, always-identically-structured note straight into your Obsidian vault. Capture from a topic, a file, a PDF, or audio/video; split broad topics into several notes; link notes together for Obsidian's graph view.
+### `2brain -q` — your second brain
+Type `2brain -q "what I just figured out"` and an AI writes a clean, always-identically-structured note straight into your Obsidian vault. Capture from a topic, a file, a PDF, or audio/video; split broad topics into several notes; link notes together for Obsidian's graph view.
 
-→ **Full usage, every flag, examples: [docs/2brain.md](docs/2brain.md)**
+→ **Full usage, every flag, examples: [docs/2brain-quick.md](docs/2brain-quick.md)**
 
-### `2repo` — repository intelligence
-Run `2repo ~/Work/my-repo` and it runs the full repo intelligence stack in order: **graph → wiki → arch**. The graph layer creates the canonical repo artifacts under `2repo/` (graph report, execution knowledge, durable memory, semantic index, and `REPO_CONTEXT.md`), then writes one editor bridge file for your selected AI target (`CLAUDE.md`, Copilot instructions, or Cursor rules). The wiki layer adds the per-file living wiki, and the arch layer adds component docs + Mermaid diagrams. Your AI assistant starts each session already knowing the repo instead of re-reading it. Re-running is incremental, so only what changed is regenerated; `--force-all` rebuilds everything.
+### `2brain` — repository intelligence
+Run `2brain ~/Work/my-repo` and it runs the full repo intelligence stack in order: **graph → wiki → arch**. The graph layer creates the canonical repo artifacts under `.2brain/` (graph report, execution knowledge, durable memory, semantic index, and `REPO_CONTEXT.md`), then writes one editor bridge file for your selected AI target (`CLAUDE.md`, Copilot instructions, or Cursor rules). The wiki layer adds the per-file living wiki, and the arch layer adds component docs + Mermaid diagrams. Your AI assistant starts each session already knowing the repo instead of re-reading it. Re-running is incremental, so only what changed is regenerated; `--force-all` rebuilds everything.
 
-Yes: a bare `2repo <repo>` is the full pipeline. If you want only one layer, use `2repo graph <repo>`, `2repo wiki <repo>`, or `2repo arch <repo>`.
+Yes: a bare `2brain <repo>` is the full pipeline. If you want only one layer, use `2brain graph <repo>`, `2brain wiki <repo>`, or `2brain arch <repo>`.
 
 If you want to hook Claude Code directly, run it once per repo:
 
 ```bash
-2repo ~/Work/my-repo --ai-target claude
-# or: 2repo ~/Work/my-repo    # then pick Claude from the interactive selector
+2brain ~/Work/my-repo --ai-target claude
+# or: 2brain ~/Work/my-repo    # then pick Claude from the interactive selector
 ```
 
-That creates `CLAUDE.md` at the repo root. Claude Code automatically follows the generated context, and the file includes `@2repo/REPO_CONTEXT.md`, so the repo context is loaded at session start. You can still rerun `2repo ~/Work/my-repo` later to refresh everything incrementally.
+That creates `CLAUDE.md` at the repo root. Claude Code automatically follows the generated context, and the file includes `@.2brain/REPO_CONTEXT.md`, so the repo context is loaded at session start. You can still rerun `2brain ~/Work/my-repo` later to refresh everything incrementally.
 
-Each layer is also callable on its own (`2repo graph`, `2repo wiki`, `2repo arch`), alongside semantic `query`, durable `remember`, and staleness checks.
+Each layer is also callable on its own (`2brain graph`, `2brain wiki`, `2brain arch`), alongside semantic `query`, durable `remember`, and staleness checks.
 
-**Two tiers, two audiences.** The per-file wiki is written for machines — one page per source file, read through the semantic index so your AI never has to open the file — and stays in the repo. On top of it, 2repo builds a **module tier**: one note per meaningful directory (~30 for a 430-file repo), linked to each other along the real dependency graph. That tier and the architecture pages are what get mirrored into Obsidian, so a project shows up as a couple of dozen readable, connected notes instead of hundreds of orphans. Generated notes are tagged `2repo`, so a graph filter of `-tag:2repo` shows only your own writing.
+**Two tiers, two audiences.** The per-file wiki is written for machines — one page per source file, read through the semantic index so your AI never has to open the file — and stays in the repo. On top of it, 2brain builds a **module tier**: one note per meaningful directory (~30 for a 430-file repo), linked to each other along the real dependency graph. That tier and the architecture pages are what get mirrored into Obsidian, so a project shows up as a couple of dozen readable, connected notes instead of hundreds of orphans. Generated notes are tagged `2brain`, so a graph filter of `-tag:2brain` shows only your own writing.
 
-On the first run per repository, 2repo asks which paths to document — include (blank = everything) and exclude (blank = nothing), as gitignore-style patterns like `**/*.test.ts`. The answer is saved to `.2repoignore` in that repo and is editable by hand; `--include` / `--exclude` / `--rescope` set it from the command line.
+On the first run per repository, 2brain asks which paths to document — include (blank = everything) and exclude (blank = nothing), as gitignore-style patterns like `**/*.test.ts`. The answer is saved to `.2brainignore` in that repo and is editable by hand; `--include` / `--exclude` / `--rescope` set it from the command line.
 
-→ **New here? Start with [docs/2repo-why.md](docs/2repo-why.md)** — why to run it and what it costs. Full pipeline, subcommands, examples: **[docs/2repo.md](docs/2repo.md)**
+→ **New here? Start with [docs/2brain-why.md](docs/2brain-why.md)** — why to run it and what it costs. Full pipeline, subcommands, examples: **[docs/2brain.md](docs/2brain.md)**
 
 ---
 
@@ -131,17 +127,16 @@ CONTAINER_ENGINE=podman        # or docker
 
 The shipped `DEFAULT_PRESET=fast` runs on Ollama and works once you pull the model in step 5.
 
-### 2. Register `2brain` and `2repo` as global commands
+### 2. Register `2brain` as a global command
 
 Add to `~/.zshrc` or `~/.bashrc` (check with `echo $SHELL`):
 
 ```bash
 export KNOWLEDGE_HUB="$HOME/knowledge-hub"   # adjust if you cloned elsewhere
 alias 2brain="$KNOWLEDGE_HUB/scripts/2brain.sh"
-alias 2repo="$KNOWLEDGE_HUB/scripts/2repo.sh"
 ```
 
-Then reload: `source ~/.zshrc`. Now both commands work from any directory.
+Then reload: `source ~/.zshrc`. Now the command works from any directory.
 
 ### 3. Build the container images
 
@@ -173,13 +168,13 @@ Tip: `scripts/ollama.sh install` gives you a plain `ollama` command on the host 
 
 Obsidian → **Open folder as vault** → select `vault/` inside this repo.
 
-Done. Type `2brain "topic"` and a note appears; type `2repo /path/to/repo` to generate repo intelligence.
+Done. Type `2brain -q "topic"` and a note appears; type `2brain /path/to/repo` to generate repo intelligence.
 
 ---
 
-## Installing the commands
+## Installing the command
 
-Both commands are **shell aliases/functions that call `docker compose`** — nothing is `pip install`ed on the host. Pick your platform:
+`2brain` is a **shell alias/function that calls `docker compose`** — nothing is `pip install`ed on the host. Pick your platform:
 
 ### Linux / macOS (bash, zsh)
 
@@ -188,10 +183,9 @@ Add to `~/.bashrc`, `~/.zshrc`, or `~/.profile`:
 ```bash
 export KNOWLEDGE_HUB="$HOME/knowledge-hub"   # adjust if you cloned elsewhere
 alias 2brain="$KNOWLEDGE_HUB/scripts/2brain.sh"
-alias 2repo="$KNOWLEDGE_HUB/scripts/2repo.sh"
 ```
 
-Reload: `source ~/.bashrc` (or `~/.zshrc`). Both commands are now available in any new terminal.
+Reload: `source ~/.bashrc` (or `~/.zshrc`). The command is now available in any new terminal.
 
 > **Podman users**: set `CONTAINER_ENGINE=podman` in `.env` before building.
 
@@ -202,21 +196,19 @@ Add to your `$PROFILE` (run `notepad $PROFILE` to create/open it):
 ```powershell
 $KH = "$HOME\Documents\knowledge-hub"   # adjust to your clone path
 function 2brain { & "$KH\scripts\2brain.ps1" @args }
-function 2repo  { & "$KH\scripts\2repo.ps1"  @args }
 ```
 
-Close and reopen PowerShell. The `.ps1` wrappers target `docker-compose.windows.yml` automatically.
+Close and reopen PowerShell. The `.ps1` wrapper targets `docker-compose.windows.yml` automatically.
 
 > **Prerequisite**: [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/) with WSL 2 backend, or Podman Desktop with `CONTAINER_ENGINE=podman` set in `.env`.
 
 ### Windows (Git Bash)
 
-Works identically to Linux — the `.sh` scripts are POSIX-compatible:
+Works identically to Linux — the `.sh` script is POSIX-compatible:
 
 ```bash
 export KNOWLEDGE_HUB="$HOME/Documents/knowledge-hub"
 alias 2brain="$KNOWLEDGE_HUB/scripts/2brain.sh"
-alias 2repo="$KNOWLEDGE_HUB/scripts/2repo.sh"
 ```
 
 > Git Bash paths work because Docker Desktop maps them via WSL. Use Unix-style paths (`~/Documents/…`).
@@ -233,8 +225,7 @@ On any platform:
 
 ```bash
 2brain --version
-2repo --version
-# → knowledge-hub 0.1.0
+# → knowledge-hub 0.2.0
 ```
 
 If you get `command not found`, your shell profile wasn't reloaded — run `source ~/.bashrc` (Linux/macOS) or open a new PowerShell window.
@@ -243,18 +234,18 @@ If you get `command not found`, your shell profile wasn't reloaded — run `sour
 
 ## Using a paid provider
 
-Both commands route through two **presets** (`provider:model`): `fast` (local Ollama, the default) and `deep` (a cloud model for heavy jobs). Point `deep` at whatever paid model you like.
+Both modes route through two **presets** (`provider:model`): `fast` (local Ollama, the default) and `deep` (a cloud model for heavy jobs). Point `deep` at whatever paid model you like.
 
 ```bash
 # .env
 OPENAI_API_KEY=sk-...
 PRESET_DEEP=openai:gpt-4o        # or anthropic:claude-sonnet-4-6
 
-2brain "topic" --preset deep     # use once
+2brain -q "topic" --preset deep  # use once
 DEFAULT_PRESET=deep              # or make it the default
 ```
 
-`2repo` can use its own defaults via `REPO_PRESET_GRAPH` and `REPO_PRESET_WIKI`. See the docs for the full preset story.
+Repo mode can use its own defaults via `REPO_PRESET_GRAPH` and `REPO_PRESET_WIKI`. See the docs for the full preset story.
 
 ---
 
@@ -295,7 +286,7 @@ scripts/ollama.sh fix-gpu  # after a driver update/reboot, if you see "Could not
 | Model not found | `docker compose exec ollama ollama pull qwen3:8b` |
 | Note not visible in Obsidian | The command prints the path; press the vault refresh button |
 
-Full configuration reference lives in the docs: **[docs/2brain.md](docs/2brain.md)** · **[docs/2repo.md](docs/2repo.md)** · **[docs/ollama.md](docs/ollama.md)**.
+Full configuration reference lives in the docs: **[docs/2brain-quick.md](docs/2brain-quick.md)** · **[docs/2brain.md](docs/2brain.md)** · **[docs/ollama.md](docs/ollama.md)**.
 
 ## Development
 

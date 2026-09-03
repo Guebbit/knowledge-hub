@@ -1,7 +1,7 @@
 [project]
 name = "knowledge-hub"
-version = "0.1.0"
-description = "Second-brain stack: vault ingestion (2brain) and repo graph/wiki generation (2repo)."
+version = "0.2.0"
+description = "Second-brain stack: vault ingestion (2brain -q) and repo graph/wiki generation (2brain)."
 requires-python = ">=3.12"
 dependencies = [
     "requests",

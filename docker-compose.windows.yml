@@ -1,8 +1,8 @@
-# Windows / CPU-only compose for knowledge-hub (2repo).
+# Windows / CPU-only compose for knowledge-hub (2brain).
 #
 # STANDALONE — this file does NOT merge with docker-compose.yml. Use it directly:
 #   docker compose -f docker-compose.windows.yml <cmd>
-# or via the scripts/2repo.ps1 wrapper.
+# or via the scripts/2brain.ps1 wrapper.
 #
 # Why a separate file instead of an override: docker compose *appends* list fields
 # (devices, volumes) across files, so a GPU device request or a Linux bind mount in
@@ -46,7 +46,7 @@ services:
       context: .
       dockerfile: Dockerfile.scripts
     # No persistent container — invoked via `docker compose run --rm scripts ...`
-    # (the 2repo.ps1 wrapper does this and mounts the target repo at /target-repo).
+    # (the 2brain.ps1 wrapper does this and mounts the target repo at /target-repo).
     volumes:
       - ./vault:/vault:rw
       - ./scripts:/scripts:ro
