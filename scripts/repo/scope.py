@@ -1,9 +1,9 @@
 """
-Path scope for 2repo — which files the pipeline is allowed to document.
+Path scope for 2brain — which files the pipeline is allowed to document.
 
-Backed by a hand-editable `.2repoignore` at the target repo root, so the scope
+Backed by a hand-editable `.2brainignore` at the target repo root, so the scope
 is inspectable and version-controllable alongside the code it describes rather
-than hidden in 2repo's generated output.
+than hidden in 2brain's generated output.
 
 The file holds two gitignore-syntax sections:
 
@@ -27,19 +27,21 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from shared import config
+
 try:
     import pathspec
     import pathspec.util
 except ImportError:  # pragma: no cover - pathspec is a declared dependency
     pathspec = None
 
-SCOPE_FILENAME = ".2repoignore"
+SCOPE_FILENAME = config.SCOPE_FILE
 
 _INCLUDE_SECTION = "[include]"
 _EXCLUDE_SECTION = "[exclude]"
 
 _HEADER = f"""\
-# 2repo scope — which files 2repo documents.
+# 2brain scope — which files 2brain documents.
 #
 # Gitignore-style patterns, one per line, matched against repo-relative paths:
 #   src/**            every file under src/
@@ -49,7 +51,7 @@ _HEADER = f"""\
 # {_INCLUDE_SECTION} restricts the documented set. Empty = every file.
 # {_EXCLUDE_SECTION} removes files from that set. Empty = nothing. Exclude wins.
 #
-# Regenerate the prompt that wrote this with: 2repo <repo> --rescope
+# Regenerate the prompt that wrote this with: 2brain <repo> --rescope
 """
 
 
@@ -102,7 +104,7 @@ def _spec(patterns: tuple[str, ...]):
     if cached is None:
         if pathspec is None:
             raise RuntimeError(
-                "pathspec is not installed — required for .2repoignore pattern matching"
+                "pathspec is not installed — required for .2brainignore pattern matching"
             )
         cached = pathspec.PathSpec.from_lines(_pattern_factory(), patterns)
         _SPEC_CACHE[patterns] = cached
@@ -139,7 +141,7 @@ def _clean(lines: list[str]) -> tuple[str, ...]:
 
 
 def load(repo_path: str) -> Scope:
-    """Read the scope from `.2repoignore`, or an empty scope when absent/unreadable."""
+    """Read the scope from `.2brainignore`, or an empty scope when absent/unreadable."""
     path = scope_file(repo_path)
     if not path.is_file():
         return Scope()
@@ -161,7 +163,7 @@ def load(repo_path: str) -> Scope:
 
 
 def save(repo_path: str, scope: Scope) -> Path:
-    """Write the scope back to `.2repoignore`, preserving the explanatory header."""
+    """Write the scope back to `.2brainignore`, preserving the explanatory header."""
     path = scope_file(repo_path)
     body = [_HEADER, _INCLUDE_SECTION]
     body.extend(scope.include)
@@ -204,7 +206,7 @@ def resolve(
 ) -> Scope:
     """Resolve the active scope and persist it.
 
-    Precedence: --include/--exclude > REPO_INCLUDE/REPO_EXCLUDE > .2repoignore >
+    Precedence: --include/--exclude > REPO_INCLUDE/REPO_EXCLUDE > .2brainignore >
     interactive prompt (first run on a repo, or --rescope) > everything.
     """
     if cli_include is not None or cli_exclude is not None:
@@ -236,7 +238,7 @@ def resolve(
         # so a later interactive run still gets the prompt.
         return load(repo_path) if existing else Scope()
 
-    print(f"Scope    : which files should 2repo document?  (written to {SCOPE_FILENAME})")
+    print(f"Scope    : which files should 2brain document?  (written to {SCOPE_FILENAME})")
     print("           Gitignore-style patterns, comma- or space-separated. Enter to accept the default.")
     include = _prompt_patterns(
         "Include paths (blank = everything):",

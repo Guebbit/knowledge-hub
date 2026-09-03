@@ -46,7 +46,7 @@ class TestContextWindow:
 
     CodeBoarding asks Ollama for the model's context length and gets the
     architectural maximum, not the server-side OLLAMA_NUM_CTX, and never budgets
-    against it — so 2repo has to pass the real window down (see
+    against it — so 2brain has to pass the real window down (see
     patches/codeboarding/context_budget.py).
     """
 

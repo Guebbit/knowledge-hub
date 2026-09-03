@@ -80,13 +80,17 @@ MODELS_PATH = Path(
 # set not list — membership checks (ext in AUDIO_EXTENSIONS) are O(1) on sets, O(n) on lists
 AUDIO_EXTENSIONS = {".mp3", ".mp4", ".wav", ".m4a", ".webm", ".ogg", ".flac"}
 
-# --- Generated paths (2repo) ------------------------------------------------
+# --- Generated paths (2brain) ------------------------------------------------
 #
-# OUT_DIR is the root of everything 2repo writes into a target repository, and
+# OUT_DIR is the root of everything 2brain writes into a target repository, and
 # the single place to change that name. It is named after the tool that owns it:
-# 2repo writes execution, memory, index, context and wiki artifacts here,
+# 2brain writes execution, memory, index, context and wiki artifacts here,
 # CodeBoarding writes arch/, and graphify gets the nested subdirectory below.
-OUT_DIR = ".2repo"
+OUT_DIR = ".2brain"
+
+# Not derived from OUT_DIR — hand-rename through these if either ever changes.
+SCOPE_FILE = ".2brainignore"
+STATE_FILE = ".2brain-state.json"
 
 # graphify's own output, nested so third-party artifacts stay visibly separate
 # from ours. graphify resolves this from the GRAPHIFY_OUT env var (read once at
@@ -99,20 +103,20 @@ OUT_DIR = ".2repo"
 # graph/ directory in the *target* repo from extraction.
 GRAPHIFY_OUT = f"{OUT_DIR}/graphify-out"
 
-# Single source of truth for "what 2repo generates". Everything that must ignore
+# Single source of truth for "what 2brain generates". Everything that must ignore
 # generated files derives from these two constants instead of hardcoding its own
 # copy: the git staleness pathspecs, _is_generated_path(), and the wiki's
 # documentable-file filter. Add a generated location once, here.
 #
 # .codeboarding/ is CodeBoarding's native working/baseline dir written by
-# `2repo arch` (analysis.json + rendered Markdown). Its indexed copy lives under
+# `2brain arch` (analysis.json + rendered Markdown). Its indexed copy lives under
 # OUT_DIR/arch/; the .codeboarding/ dir itself is machine-owned and must be
 # ignored by staleness checks and never documented by the wiki.
-# .claude/ is deliberately absent: 2repo's Claude integration is a managed block
+# .claude/ is deliberately absent: 2brain's Claude integration is a managed block
 # in CLAUDE.md and nothing else, so a target repo's .claude/ is entirely
 # hand-written config — edits there are real repo changes.
 GENERATED_DIR_PREFIXES = (f"{OUT_DIR}/", ".cursor/", ".codeboarding/")
-# .graphifyignore and .gitattributes carry a 2repo-managed block (see
+# .graphifyignore and .gitattributes carry a 2brain-managed block (see
 # repo/injection.py), so regenerating them must not count as the repo changing —
 # same rule as CLAUDE.md, which likewise mixes managed and hand-written content.
 GENERATED_FILES = (

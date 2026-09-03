@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """
-2repo — repository intelligence pipeline for any codebase.
+2brain — repository intelligence pipeline for any codebase.
 
-Usage (via 2repo.sh alias) — one subcommand per category:
-  2repo .                                # every layer: graph + wiki + arch (same as: 2repo all .)
-  2repo all . --force-all                # every layer, rebuilt from scratch
-  2repo graph .                          # graph layer only (extract + execution + index + AI injection)
-  2repo graph . --update                 # incremental graphify update + orchestration
-  2repo check .                          # staleness check vs last baseline
-  2repo hook .                           # install stale-warning post-commit hook
-  2repo query . "how do I run tests?" --top-k 5
-  2repo remember . "Use pytest -q for unit tests" --kind runbook
-  2repo reindex .                        # rebuild semantic index + selected AI injection from existing artifacts
-  2repo wiki .                           # incremental LLM wiki (changed files + 2-hop graph neighbors)
-  2repo wiki . src/auth.ts src/db.ts     # target specific files (+ their graph neighbors)
-  2repo wiki . --force-all               # full wiki rebuild (ignore cache and baseline)
-  2repo wiki . --dry-run                 # list pages that would be regenerated (no LLM calls)
-  2repo wiki . --no-mirror-vault         # skip the vault mirror (on by default when a vault exists)
-  2repo . --exclude '**/*.test.ts'       # set the documented scope (persists to <repo>/.2repoignore)
-  2repo . --include 'src/**,api/**'      # document only these paths
-  2repo . --rescope                      # re-ask the include/exclude prompt
-  2repo arch .                           # architecture layer: component pages + Mermaid diagrams (CodeBoarding)
-  2repo arch . --force-all               # full re-analysis (ignore CodeBoarding incremental baseline)
-  2repo arch . --dry-run                 # report full-vs-incremental without calling the LLM
+Usage (via 2brain.sh alias) — one subcommand per category:
+  2brain .                                # every layer: graph + wiki + arch (same as: 2brain all .)
+  2brain all . --force-all                # every layer, rebuilt from scratch
+  2brain graph .                          # graph layer only (extract + execution + index + AI injection)
+  2brain graph . --update                 # incremental graphify update + orchestration
+  2brain check .                          # staleness check vs last baseline
+  2brain hook .                           # install stale-warning post-commit hook
+  2brain query . "how do I run tests?" --top-k 5
+  2brain remember . "Use pytest -q for unit tests" --kind runbook
+  2brain reindex .                        # rebuild semantic index + selected AI injection from existing artifacts
+  2brain wiki .                           # incremental LLM wiki (changed files + 2-hop graph neighbors)
+  2brain wiki . src/auth.ts src/db.ts     # target specific files (+ their graph neighbors)
+  2brain wiki . --force-all               # full wiki rebuild (ignore cache and baseline)
+  2brain wiki . --dry-run                 # list pages that would be regenerated (no LLM calls)
+  2brain wiki . --no-mirror-vault         # skip the vault mirror (on by default when a vault exists)
+  2brain . --exclude '**/*.test.ts'       # set the documented scope (persists to <repo>/.2brainignore)
+  2brain . --include 'src/**,api/**'      # document only these paths
+  2brain . --rescope                      # re-ask the include/exclude prompt
+  2brain arch .                           # architecture layer: component pages + Mermaid diagrams (CodeBoarding)
+  2brain arch . --force-all               # full re-analysis (ignore CodeBoarding incremental baseline)
+  2brain arch . --dry-run                 # report full-vs-incremental without calling the LLM
 
-A bare `2repo <repo>` runs all three layers in order. Its graph step is
+A bare `2brain <repo>` runs all three layers in order. Its graph step is
 incremental whenever graphify output already exists, so re-running is cheap;
 --force-all rebuilds every layer from scratch.
 
@@ -34,8 +34,8 @@ pages are mirrored into vault/Projects/<repo-name>/Generated/ whenever a vault i
 found at VAULT_PATH; per-file wiki pages are machine-tier and stay in the repo.
 Set REPO_MIRROR_VAULT=0 in .env, or pass --no-mirror-vault, to turn mirroring off.
 
-Which files get documented is a per-repo scope kept in <repo>/.2repoignore —
-2repo asks once, on the first run, and the file is hand-editable afterwards.
+Which files get documented is a per-repo scope kept in <repo>/.2brainignore —
+2brain asks once, on the first run, and the file is hand-editable afterwards.
 """
 
 from __future__ import annotations
@@ -84,8 +84,8 @@ _BACKEND_MAP = {
 
 _OUT = Path(config.OUT_DIR)
 _GRAPHIFY_OUT = Path(config.GRAPHIFY_OUT)
-_STATE_FILE_SUBPATH = _OUT / ".2repo-state.json"
-# git pathspecs that exclude 2repo's own generated output from staleness diffs,
+_STATE_FILE_SUBPATH = _OUT / config.STATE_FILE
+# git pathspecs that exclude 2brain's own generated output from staleness diffs,
 # derived from the shared generated-path definitions in config.
 _STALE_EXCLUDES = [
     *(f":(exclude){prefix}**" for prefix in GENERATED_DIR_PREFIXES),
@@ -161,7 +161,7 @@ def _print_summary(title: str) -> None:
     _SUMMARY.clear()
 
 # Distinguishes "caller did not pin a wiki baseline" from "caller pinned an empty
-# one" (a first `2repo all` run, where no prior state existed). The two must take
+# one" (a first `2brain all` run, where no prior state existed). The two must take
 # different paths: the former reads state, the latter must document every file.
 _UNPINNED = object()
 
@@ -323,7 +323,7 @@ def _write_state(repo_path: str, *, pipeline: dict[str, object]) -> None:
 def _read_state(repo_path: str) -> dict[str, object] | None:
     state_file = _repo_state_file(repo_path)
     if not state_file.exists():
-        print("Stale    : state not found — run '2repo graph <repo>' first")
+        print("Stale    : state not found — run '2brain graph <repo>' first")
         return None
     try:
         return json.loads(state_file.read_text())
@@ -394,7 +394,7 @@ def _check(repo_path: str) -> int:
 
 def _install_hook(repo_path: str) -> int:
     if not _in_git_repo(repo_path):
-        die("'2repo hook' requires a git repository")
+        die("'2brain hook' requires a git repository")
 
     hooks_dir = Path(repo_path) / ".git" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
@@ -420,22 +420,22 @@ changed="$(git diff --name-only "${{base_commit}}"..HEAD -- \\
 threshold="{threshold}"
 
 if [[ "${{threshold}}" -gt 0 && "${{changed}}" -ge "${{threshold}}" ]]; then
-  echo "2repo warning: graph may be stale (${{changed}} files changed since last generation, threshold=${{threshold}})." >&2
-  echo "Run: 2repo graph . --update   (or full run: 2repo graph .)" >&2
-  echo "Wiki: 2repo wiki .            (incremental wiki refresh for changed files)" >&2
+  echo "2brain warning: graph may be stale (${{changed}} files changed since last generation, threshold=${{threshold}})." >&2
+  echo "Run: 2brain graph . --update   (or full run: 2brain graph .)" >&2
+  echo "Wiki: 2brain wiki .            (incremental wiki refresh for changed files)" >&2
 fi
 
-# Auto-refresh the wiki when: enabled at hook-install time, something changed, and the 2repo alias exists.
-if [[ "{wiki_auto}" == "1" && "${{changed}}" -gt 0 ]] && command -v 2repo >/dev/null 2>&1; then
-  echo "2repo: refreshing wiki incrementally (REPO_WIKI_AUTO=1)..." >&2
-  2repo wiki "${{repo_root}}" || echo "2repo: wiki refresh failed — run manually: 2repo wiki ." >&2
+# Auto-refresh the wiki when: enabled at hook-install time, something changed, and the 2brain alias exists.
+if [[ "{wiki_auto}" == "1" && "${{changed}}" -gt 0 ]] && command -v 2brain >/dev/null 2>&1; then
+  echo "2brain: refreshing wiki incrementally (REPO_WIKI_AUTO=1)..." >&2
+  2brain wiki "${{repo_root}}" || echo "2brain: wiki refresh failed — run manually: 2brain wiki ." >&2
 fi
 """
     hook_path.write_text(hook)
     hook_path.chmod(0o755)
     print(f"Hook     : installed stale-warning hook in {hook_path}")
     print(f"Hook     : threshold={threshold} (set REPO_STALE_THRESHOLD to change)")
-    print(f"Hook     : wiki auto-refresh {'enabled' if wiki_auto == '1' else 'disabled'} (set REPO_WIKI_AUTO=1 before '2repo hook' to enable)")
+    print(f"Hook     : wiki auto-refresh {'enabled' if wiki_auto == '1' else 'disabled'} (set REPO_WIKI_AUTO=1 before '2brain hook' to enable)")
     return 0
 
 
@@ -552,7 +552,7 @@ def _query(repo_path: str, query_text: str, top_k: int) -> int:
     try:
         results = repo_index.semantic_query(repo_path, text=query_text, top_k=top_k)
     except FileNotFoundError:
-        die("semantic index not found — run '2repo graph <repo>' first (or '2repo reindex <repo>')")
+        die("semantic index not found — run '2brain graph <repo>' first (or '2brain reindex <repo>')")
     except ValueError as exc:
         die(str(exc))
 
@@ -619,7 +619,7 @@ def _changed_files_since_commit(repo_path: str, base_commit: str) -> set[str] | 
 def _baseline_head(repo_path: str) -> str:
     """Read the recorded baseline commit without the 'state not found' chatter.
 
-    `2repo all` has to capture the baseline *before* the graph layer overwrites
+    `2brain all` has to capture the baseline *before* the graph layer overwrites
     it, at a point where a missing state file is the normal first-run case and
     not worth warning about.
     """
@@ -634,7 +634,7 @@ def _baseline_head(repo_path: str) -> str:
 
 
 def _baseline_changed_files(repo_path: str) -> set[str] | None:
-    """Return files changed since the .2repo-state.json baseline, or None if unusable."""
+    """Return files changed since the .2brain-state.json baseline, or None if unusable."""
     if not _in_git_repo(repo_path):
         return None
     state = _read_state(repo_path)
@@ -683,7 +683,7 @@ def _wiki(
     """Generate/update the living wiki, then refresh index + context so pages are retrievable.
 
     baseline_head pins the commit to diff against instead of reading it from the
-    state file. `2repo all` needs this: its graph layer has already advanced the
+    state file. `2brain all` needs this: its graph layer has already advanced the
     recorded baseline to HEAD by the time the wiki runs, so reading state here
     would report "nothing changed" and regenerate no pages at all.
     """
@@ -908,7 +908,7 @@ def _all(
         mirror_vault=mirror_vault,
         mirror_explicit=mirror_explicit,
     )
-    _print_summary(f"2repo · {repo_display_name(repo_path)}")
+    _print_summary(f"2brain · {repo_display_name(repo_path)}")
     return returncode
 
 
@@ -916,7 +916,7 @@ _COMMANDS = ("all", "graph", "check", "hook", "reindex", "query", "remember", "w
 
 
 def _with_default_command(argv: list[str]) -> list[str]:
-    """Default to the 'all' subcommand when none is given: '2repo .' → '2repo all .'."""
+    """Default to the 'all' subcommand when none is given: '2brain .' → '2brain all .'."""
     for arg in argv:
         if arg in ("-h", "--help"):
             return argv                       # let argparse print help
@@ -932,8 +932,8 @@ def _add_repo_argument(parser: argparse.ArgumentParser) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="2repo",
-        description="Generate and query repository intelligence artifacts with 2repo",
+        prog="2brain",
+        description="Generate and query repository intelligence artifacts with 2brain",
     )
     subparsers = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
@@ -942,9 +942,9 @@ def main() -> None:
     all_parser.add_argument("--force-all", action="store_true", help="Rebuild every layer from scratch (full graph extract, full wiki, full arch re-analysis)")
     all_parser.add_argument("--preset", metavar="NAME", help="Override the preset for all three layers (e.g. fast, deep)")
     all_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
-    all_parser.add_argument("--include", metavar="PATTERNS", help="Only document these paths (comma-separated gitignore-style patterns, e.g. 'src/**,api/**'); persists to .2repoignore")
-    all_parser.add_argument("--exclude", metavar="PATTERNS", help="Never document these paths (comma-separated gitignore-style patterns, e.g. '**/*.test.ts,docs/**'); persists to .2repoignore")
-    all_parser.add_argument("--rescope", action="store_true", help="Re-ask the include/exclude prompt even when .2repoignore already exists")
+    all_parser.add_argument("--include", metavar="PATTERNS", help="Only document these paths (comma-separated gitignore-style patterns, e.g. 'src/**,api/**'); persists to .2brainignore")
+    all_parser.add_argument("--exclude", metavar="PATTERNS", help="Never document these paths (comma-separated gitignore-style patterns, e.g. '**/*.test.ts,docs/**'); persists to .2brainignore")
+    all_parser.add_argument("--rescope", action="store_true", help="Re-ask the include/exclude prompt even when .2brainignore already exists")
     all_parser.add_argument(
         "--mirror-vault",
         action=argparse.BooleanOptionalAction,
@@ -988,9 +988,9 @@ def main() -> None:
     wiki_parser.add_argument("files", nargs="*", metavar="FILE", help="Optional explicit files to regenerate (plus their graph neighbors)")
     wiki_parser.add_argument("--force-all", action="store_true", help="Full rebuild, ignoring cache and baseline")
     wiki_parser.add_argument("--dry-run", action="store_true", help="List pages that would regenerate, without calling the LLM")
-    wiki_parser.add_argument("--include", metavar="PATTERNS", help="Only document these paths (comma-separated gitignore-style patterns, e.g. 'src/**,api/**'); persists to .2repoignore")
-    wiki_parser.add_argument("--exclude", metavar="PATTERNS", help="Never document these paths (comma-separated gitignore-style patterns, e.g. '**/*.test.ts,docs/**'); persists to .2repoignore")
-    wiki_parser.add_argument("--rescope", action="store_true", help="Re-ask the include/exclude prompt even when .2repoignore already exists")
+    wiki_parser.add_argument("--include", metavar="PATTERNS", help="Only document these paths (comma-separated gitignore-style patterns, e.g. 'src/**,api/**'); persists to .2brainignore")
+    wiki_parser.add_argument("--exclude", metavar="PATTERNS", help="Never document these paths (comma-separated gitignore-style patterns, e.g. '**/*.test.ts,docs/**'); persists to .2brainignore")
+    wiki_parser.add_argument("--rescope", action="store_true", help="Re-ask the include/exclude prompt even when .2brainignore already exists")
     wiki_parser.add_argument(
         "--mirror-vault",
         action=argparse.BooleanOptionalAction,
@@ -1078,7 +1078,7 @@ def main() -> None:
             mirror_explicit=mirror_explicit,
             scope=scope,
         )
-        _print_summary(f"2repo wiki · {repo_display_name(args.repo)}")
+        _print_summary(f"2brain wiki · {repo_display_name(args.repo)}")
         sys.exit(returncode)
 
     if args.command == "arch":
@@ -1101,7 +1101,7 @@ def main() -> None:
             mirror_vault=mirror_vault,
             mirror_explicit=mirror_explicit,
         )
-        _print_summary(f"2repo arch · {repo_display_name(args.repo)}")
+        _print_summary(f"2brain arch · {repo_display_name(args.repo)}")
         sys.exit(returncode)
 
     provider, model = _resolve_preset(args.preset)

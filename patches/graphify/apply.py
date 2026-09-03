@@ -1,4 +1,4 @@
-"""Apply 2repo's build-time patch to the pinned graphifyy package.
+"""Apply 2brain's build-time patch to the pinned graphifyy package.
 
 Run by Dockerfile.scripts with the scripts image's own interpreter right after
 `pip install graphifyy==0.9.13`:
@@ -45,7 +45,7 @@ import py_compile
 import sys
 from pathlib import Path
 
-_MARKER = "2repo patch"
+_MARKER = "2brain patch"
 
 _OLD = (
     "    # Pre-deduplicate: keep first occurrence of each id.\n"
@@ -76,7 +76,7 @@ _OLD = (
 
 _NEW = (
     "    # Pre-deduplicate: keep first occurrence of each id.\n"
-    "    # 2repo patch (patches/graphify/apply.py): two nodes sharing an ID but\n"
+    "    # 2brain patch (patches/graphify/apply.py): two nodes sharing an ID but\n"
     "    # different source files means the same real entity was independently\n"
     "    # extracted twice (e.g. a doc mentioning a path, and the file itself) —\n"
     "    # collapsing them to one node is correct. Edges already reference the\n"
@@ -105,7 +105,7 @@ _NEW = (
     "    if _collision_count:\n"
     "        print(\n"
     "            f\"[graphify] note: collapsed {_collision_count} same-ID node(s) extracted \"\n"
-    "            f\"from different source files into one entity (2repo dedup patch).\",\n"
+    "            f\"from different source files into one entity (2brain dedup patch).\",\n"
     "            file=sys.stderr,\n"
     "        )\n"
     "    unique_nodes = list(seen_ids.values())\n"

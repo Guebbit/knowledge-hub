@@ -1,8 +1,8 @@
 """
-Semantic index for 2repo artifacts.
+Semantic index for 2brain artifacts.
 
 Builds a lightweight TF-IDF vector index from <OUT_DIR> artifacts and durable
-repo memory, then serves cosine-similarity retrieval for `2repo query`.
+repo memory, then serves cosine-similarity retrieval for `2brain query`.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ _REQUIRED_ARTIFACTS = (
     _OUT / "REPO_MEMORY.md",
 )
 _SKIP_INDEX_PATHS = {
-    str(_OUT / ".2repo-state.json"),
+    str(_OUT / ".2brain-state.json"),
     str(_OUT / "repo-index.json"),
     str(_OUT / "repo-memory.json"),
     str(_OUT / "wiki" / ".wiki-cache.json"),

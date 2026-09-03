@@ -1,5 +1,5 @@
 """
-Durable repository memory storage for 2repo.
+Durable repository memory storage for 2brain.
 
 Entries are stored in <OUT_DIR>/repo-memory.json and mirrored into
 <OUT_DIR>/REPO_MEMORY.md for human-readable inspection.

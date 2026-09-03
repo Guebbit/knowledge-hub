@@ -1,4 +1,4 @@
-"""Apply 2repo's build-time patches to the vendored CodeBoarding package.
+"""Apply 2brain's build-time patches to the vendored CodeBoarding package.
 
 Run by Dockerfile.scripts with CodeBoarding's own interpreter right after the
 package is installed:
@@ -125,7 +125,7 @@ def patch_read_file(site: Path) -> None:
                 "logger = logging.getLogger(__name__)\n",
                 "logger = logging.getLogger(__name__)\n"
                 "\n"
-                "# 2repo patch: lines returned per readFile call. Stock CodeBoarding is 300;\n"
+                "# 2brain patch: lines returned per readFile call. Stock CodeBoarding is 300;\n"
                 "# repo/arch.py lowers it for small local context windows.\n"
                 "_CHUNK_LINES = max(20, int(os.environ.get(\"CODEBOARDING_READ_FILE_LINES\", \"300\")))\n"
                 "_HALF_CHUNK = _CHUNK_LINES // 2\n",

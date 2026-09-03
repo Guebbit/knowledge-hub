@@ -1,4 +1,4 @@
-"""Tests for the .2repoignore scope filter."""
+"""Tests for the .2brainignore scope filter."""
 
 from __future__ import annotations
 

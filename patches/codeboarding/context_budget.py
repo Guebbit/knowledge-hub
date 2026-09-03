@@ -1,4 +1,4 @@
-"""Context-window budget for CodeBoarding's ReAct agent loop (2repo patch).
+"""Context-window budget for CodeBoarding's ReAct agent loop (2brain patch).
 
 Installed into CodeBoarding's venv as ``codeboarding_context_budget`` by
 ``patches/codeboarding/apply.py`` and wired into ``agents/agent.py`` as a
@@ -16,7 +16,7 @@ crosses that window Ollama silently drops the oldest tokens — the system promp
 and the task — and the turn comes back empty or as a 500. CodeBoarding then
 retries the whole component from scratch, up to five times, and the final result
 is degraded anyway. On a 24 GB GPU with a 27B model this was the dominant
-failure mode of ``2repo arch``.
+failure mode of ``2brain arch``.
 
 WHAT
 ────────────────────────────────────────────────────────────────────────────

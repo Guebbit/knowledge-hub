@@ -1,5 +1,5 @@
 """
-Module tier for 2repo — the human-facing layer between per-file pages and the
+Module tier for 2brain — the human-facing layer between per-file pages and the
 whole-architecture view.
 
 WHY THIS EXISTS
@@ -347,7 +347,7 @@ def _frontmatter(fields: dict[str, object], tags: list[str]) -> str:
 
     Tags are what make the vault usable once generated notes live beside
     hand-written ones: Obsidian's graph view can colour or filter on them, so
-    `-tag:2repo` shows only your own thinking.
+    `-tag:2brain` shows only your own thinking.
     """
     lines = ["---", "tags:"]
     lines.extend(f"  - {tag}" for tag in tags)
@@ -384,7 +384,7 @@ def _render_note(
     parts = [
         _frontmatter(
             {"type": "module", "module": module_title(module), "files": len(members), "updated": updated},
-            ["2repo", "2repo/module", f"project/{repo_name}"],
+            ["2brain", "2brain/module", f"project/{repo_name}"],
         ),
         "",
         f"# {module_title(module)}",
@@ -420,7 +420,7 @@ def _render_index(
     parts = [
         _frontmatter(
             {"type": "index", "modules": len(grouped), "updated": updated},
-            ["2repo", "2repo/index", f"project/{repo_name}"],
+            ["2brain", "2brain/index", f"project/{repo_name}"],
         ),
         "",
         f"# {repo_name}",

@@ -1,5 +1,5 @@
 """
-Shared helpers for mirroring 2repo-generated Markdown into the Obsidian vault.
+Shared helpers for mirroring 2brain-generated Markdown into the Obsidian vault.
 
 Both the wiki layer (repo/wiki.py) and the architecture layer (repo/arch.py)
 mirror their generated pages into vault/Projects/<repo-name>/Generated/...; this

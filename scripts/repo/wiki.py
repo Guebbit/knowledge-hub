@@ -1,11 +1,11 @@
 """
-Living wiki generator for 2repo (Karpathy / DeepWiki-style llm-wiki concept).
+Living wiki generator for 2brain (Karpathy / DeepWiki-style llm-wiki concept).
 
 Turns the graphify dependency graph into readable per-file wiki pages plus a
 top-level overview, written to <repo>/<OUT_DIR>/wiki/.
 
 Incrementality is the core design:
-- only changed files (git diff vs the .2repo-state.json baseline) are candidates
+- only changed files (git diff vs the .2brain-state.json baseline) are candidates
 - the changed set is expanded to graph neighbors up to 2 hops
 - a per-file content-hash cache skips pages whose source did not change
 
@@ -16,7 +16,7 @@ right granularity for the semantic index and REPO_CONTEXT.md — an AI resolves 
 question without opening the file — and the wrong granularity for a human, who
 would face hundreds of near-identical notes. So per-file pages stay in the repo
 and are never mirrored into the vault; repo/modules.py builds the human-facing
-tier on top of them. See docs/2repo-internals.md §8.
+tier on top of them. See docs/2brain-internals.md §8.
 """
 
 from __future__ import annotations
@@ -237,7 +237,7 @@ def _is_documentable(repo: Path, rel_path: str, scope: Scope | None = None) -> b
     """Only document real repo files that are in scope and not generated artifacts."""
     if scope is not None and not scope.matches(rel_path):
         return False
-    # GENERATED_DIR_PREFIXES is the shared 2repo-generated set; .git/ is added
+    # GENERATED_DIR_PREFIXES is the shared 2brain-generated set; .git/ is added
     # here because the wiki also must never document version-control internals.
     if rel_path.startswith(GENERATED_DIR_PREFIXES + (".git/",)):
         return False
@@ -317,7 +317,7 @@ def generate(
     graph_files, adjacency = load_graph(repo_path)
     if not graph_files and not adjacency:
         raise FileNotFoundError(
-            f"graph not found or empty: {repo / _GRAPH_JSON_SUBPATH} — run '2repo graph <repo>' first"
+            f"graph not found or empty: {repo / _GRAPH_JSON_SUBPATH} — run '2brain graph <repo>' first"
         )
     graph_files.update(adjacency)
 
@@ -326,7 +326,7 @@ def generate(
         if scope is not None and not scope.is_empty:
             raise ValueError(
                 f"no documentable files left after applying the scope ({scope.describe()}) — "
-                f"widen it in {config.OUT_DIR}/../.2repoignore or re-run with --rescope"
+                f"widen it in {config.OUT_DIR}/../.2brainignore or re-run with --rescope"
             )
         raise ValueError("no documentable files found in the dependency graph")
 
@@ -422,7 +422,7 @@ def read_pages(repo_path: str, candidates: list[str]) -> dict[str, str]:
 
 
 def prune_legacy_vault_mirror(repo_path: str, vault_path: Path) -> list[str]:
-    """Remove the flat per-file page mirror written by earlier 2repo versions.
+    """Remove the flat per-file page mirror written by earlier 2brain versions.
 
     Until the module tier existed, every per-file page was copied into
     Projects/<repo>/Generated/ — hundreds of machine-oriented notes sitting in a

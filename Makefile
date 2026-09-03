@@ -3,7 +3,7 @@
 # Everything here runs on the host in a throwaway .venv — the tests cover pure
 # logic (module grouping, scope filtering, graph parsing) and need neither the
 # container, nor Ollama, nor an API key. The container image is for running the
-# pipeline (2brain / 2repo), not for developing it.
+# pipeline (2brain), not for developing it.
 
 VENV    := .venv
 PY      := $(VENV)/bin/python

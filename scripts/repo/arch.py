@@ -1,5 +1,5 @@
 """
-Architecture layer for 2repo — topic/component-level docs + Mermaid diagrams.
+Architecture layer for 2brain — topic/component-level docs + Mermaid diagrams.
 
 This is the tier *above* the per-file living wiki (repo/wiki.py): instead of one
 page per source file, it produces narrative "how X works" component pages and
@@ -23,9 +23,9 @@ repo.py, and index/context folding) is tool-agnostic and stays put.
 ────────────────────────────────────────────────────────────────────────────
 DESIGN (mirrors the wiki layer)
 ────────────────────────────────────────────────────────────────────────────
-- Opt-in and expensive: run via `2repo arch <repo>`, never by `2repo graph`.
+- Opt-in and expensive: run via `2brain arch <repo>`, never by `2brain graph`.
 - Canonical pages land in `<OUT_DIR>/arch/`, so repo/index.py auto-folds them
-  into the semantic index and they surface via `2repo query` + REPO_CONTEXT.md.
+  into the semantic index and they surface via `2brain query` + REPO_CONTEXT.md.
 - CodeBoarding keeps its own working/baseline dir at `<repo>/.codeboarding/`
   (analysis.json + fingerprint.json), which is what makes its incremental mode
   cheap — analogous to the wiki's .wiki-cache.json. That dir is marked generated
@@ -54,7 +54,7 @@ _BASELINE_FILENAME = "analysis.json"
 # analysis.json alone is NOT proof of a usable baseline — CodeBoarding
 # overwrites it at intermediate checkpoints during the abstraction pipeline,
 # so a run killed mid-way (Ctrl-C, OOM, timeout) leaves a partial analysis.json
-# behind with no fingerprint. Treating that as a valid baseline makes 2repo
+# behind with no fingerprint. Treating that as a valid baseline makes 2brain
 # pick "incremental" mode, which CodeBoarding itself then can't actually do
 # (it logs `requiresFullAnalysis: true`) — but instead of failing, it silently
 # renders a degraded/garbage result from the stale snapshot and exits 0.
@@ -65,7 +65,7 @@ _FINGERPRINT_FILENAME = "fingerprint.json"
 
 # Provider-credential environment variables CodeBoarding may read. We strip ALL of
 # them from the child environment and then set only the selected provider's — the
-# 2repo container often has several keys present at once (e.g. OPENAI_API_KEY for
+# 2brain container often has several keys present at once (e.g. OPENAI_API_KEY for
 # the `deep` preset alongside a local Ollama), and CodeBoarding selects its
 # provider by which credential is set. Exposing exactly one keeps selection
 # deterministic regardless of what else is in the container env.
@@ -151,7 +151,7 @@ def _provider_env(provider: str, model: str) -> dict[str, str]:
     """
     env = {k: v for k, v in os.environ.items() if k not in _PROVIDER_ENV_KEYS}
 
-    # Privacy: CodeBoarding telemetry is on by default. 2repo is local-first, so
+    # Privacy: CodeBoarding telemetry is on by default. 2brain is local-first, so
     # disable it unconditionally (belt-and-suspenders with the Dockerfile env).
     env["CODEBOARDING_TELEMETRY"] = "false"
     env["DO_NOT_TRACK"] = "1"
@@ -164,8 +164,8 @@ def _provider_env(provider: str, model: str) -> dict[str, str]:
         key = os.getenv("OPENAI_API_KEY")
         if not key:
             raise ValueError(
-                "OPENAI_API_KEY not set — required for an openai preset with '2repo arch'. "
-                "Add it to .env, or use a local preset: 2repo arch <repo> --preset fast"
+                "OPENAI_API_KEY not set — required for an openai preset with '2brain arch'. "
+                "Add it to .env, or use a local preset: 2brain arch <repo> --preset fast"
             )
         env["OPENAI_API_KEY"] = key
         base_url = os.getenv("OPENAI_BASE_URL")
@@ -175,17 +175,17 @@ def _provider_env(provider: str, model: str) -> dict[str, str]:
         key = os.getenv("ANTHROPIC_API_KEY")
         if not key:
             raise ValueError(
-                "ANTHROPIC_API_KEY not set — required for an anthropic preset with '2repo arch'. "
-                "Add it to .env, or use a local preset: 2repo arch <repo> --preset fast"
+                "ANTHROPIC_API_KEY not set — required for an anthropic preset with '2brain arch'. "
+                "Add it to .env, or use a local preset: 2brain arch <repo> --preset fast"
             )
         env["ANTHROPIC_API_KEY"] = key
     elif provider == "claude-code":
         # graphify/wiki can route through the `claude` CLI subscription, but
         # CodeBoarding has no claude-cli backend — it needs a real API credential.
         raise ValueError(
-            "provider 'claude-code' is not supported by '2repo arch' — CodeBoarding has no "
+            "provider 'claude-code' is not supported by '2brain arch' — CodeBoarding has no "
             "CLI/subscription backend. Use a preset that points at ollama, openai, or anthropic, "
-            "e.g. 2repo arch <repo> --preset fast (or set REPO_PRESET_ARCH)."
+            "e.g. 2brain arch <repo> --preset fast (or set REPO_PRESET_ARCH)."
         )
     else:
         raise ValueError(
@@ -385,7 +385,7 @@ _PROMO_FAQ_PREFIX = "### [FAQ]"
 def _clean_page(text: str) -> str:
     """Strip CodeBoarding's promo badge line and trailing FAQ link.
 
-    These are external marketing/tracking links, not documentation. 2repo is
+    These are external marketing/tracking links, not documentation. 2brain is
     local-first and these pages are folded into the semantic index, so we drop the
     promo noise while leaving the architecture prose and Mermaid diagrams intact.
     Conservative: only removes the two known promo constructs; anything else it
@@ -404,14 +404,14 @@ def _page_frontmatter(repo_path: str, name: str) -> str:
     """YAML frontmatter tagging an architecture page for the vault.
 
     Mirrors the module tier's scheme so a single Obsidian graph filter
-    (`-tag:2repo`) hides everything 2repo generates, leaving hand-written notes.
+    (`-tag:2brain`) hides everything 2brain generates, leaving hand-written notes.
     """
     return "\n".join(
         [
             "---",
             "tags:",
-            "  - 2repo",
-            "  - 2repo/arch",
+            "  - 2brain",
+            "  - 2brain/arch",
             f"  - project/{repo_display_name(repo_path)}",
             "type: architecture",
             f"component: {name.removesuffix('.md')}",

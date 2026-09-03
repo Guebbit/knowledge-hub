@@ -99,7 +99,7 @@ def _call_ollama(prompt: str) -> str:
             f"Cannot reach Ollama at {OLLAMA_URL}.\n"
             "  • If you meant to use a cloud model, pick a cloud preset instead, e.g.:\n"
             "      REPO_PRESET_GRAPH=deep  (with OPENAI_API_KEY set in .env)\n"
-            "      or run:  2repo graph <repo> --preset deep\n"
+            "      or run:  2brain graph <repo> --preset deep\n"
             "  • If you really want local Ollama, it must be running with the model pulled:\n"
             "      docker compose -f docker-compose.windows.yml up -d ollama\n"
             "    (note: local Ollama needs a machine with a supported GPU)."
@@ -202,7 +202,7 @@ def _call_copilot_cli(prompt: str) -> str:
     (or GH_TOKEN / GITHUB_TOKEN) — no per-token API billing, but each call draws
     on the plan's request allowance (premium requests for premium models).
 
-    Security: 2repo feeds untrusted repository content into prompts, so this must
+    Security: 2brain feeds untrusted repository content into prompts, so this must
     stay a hermetic text-only completion. We whitelist a non-existent tool via
     --available-tools, which disables every real tool (shell/write/web-fetch/MCP),
     run in an isolated temp cwd, and disable built-in MCPs and repo custom
