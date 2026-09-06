@@ -1,6 +1,7 @@
 .idea
 .claude
 .env
+vault/
 __pycache__/
 *.py[cod]
 .venv/

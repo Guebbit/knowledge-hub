@@ -391,7 +391,7 @@ All config lives in `.env` (copied from `.env-example`). Never edit `docker-comp
 | `OLLAMA_PORT` | `11434` | Port Ollama listens on |
 | `WHISPER_MODEL` | `base` | Whisper size: `tiny` `base` `small` `medium` `large-v3` |
 | `OLLAMA_KEEP_ALIVE` | `5m` | How long a model stays loaded in VRAM when idle |
-| `OLLAMA_NUM_CTX` | `32000` | Context window (max tokens per request) |
+| `OLLAMA_NUM_CTX` | `32000` | Context window (max tokens per request). Sets the Ollama server's `OLLAMA_CONTEXT_LENGTH` and is what `2repo arch` budgets its prompts against |
 | `OLLAMA_NUM_THREAD` | `1` | CPU threads for Ollama (keep low to leave headroom) |
 | `OLLAMA_MEM_LIMIT` | `16g` | RAM limit for the Ollama container |
 

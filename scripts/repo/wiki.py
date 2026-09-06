@@ -372,6 +372,9 @@ def generate(
         page_file = out_dir / page_name_for(rel_path)
         page_file.write_text(page, encoding="utf-8")
         cache[rel_path] = {"hash": content_hash, "page": page_file.name, "generated_at": now_iso()}
+        # Persist after every page, not once at the end: a run interrupted at page
+        # 300 of 430 must not throw away the 300 it already paid for.
+        _save_cache(repo_path, cache)
         written.append(page_file.name)
         progress.step(rel_path)
 

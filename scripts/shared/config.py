@@ -86,7 +86,7 @@ AUDIO_EXTENSIONS = {".mp3", ".mp4", ".wav", ".m4a", ".webm", ".ogg", ".flac"}
 # the single place to change that name. It is named after the tool that owns it:
 # 2repo writes execution, memory, index, context and wiki artifacts here,
 # CodeBoarding writes arch/, and graphify gets the nested subdirectory below.
-OUT_DIR = "2repo"
+OUT_DIR = ".2repo"
 
 # graphify's own output, nested so third-party artifacts stay visibly separate
 # from ours. graphify resolves this from the GRAPHIFY_OUT env var (read once at

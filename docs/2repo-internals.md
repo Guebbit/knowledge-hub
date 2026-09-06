@@ -6,7 +6,7 @@ This document explains *how* `2repo` works under the hood: what the moving parts
 
 ## 1. The core idea: one pipeline, seven layers
 
-You're right that `2repo` is not a single feature — it's a **pipeline of independent layers that stack on top of each other**. Each layer produces one or more files under `2repo/`, and every layer above consumes the ones below it.
+You're right that `2repo` is not a single feature — it's a **pipeline of independent layers that stack on top of each other**. Each layer produces one or more files under `.2repo/`, and every layer above consumes the ones below it.
 
 ```mermaid
 flowchart TD
@@ -53,29 +53,30 @@ A small, always-regenerated index page that lists the core artifacts, the curren
 
 ### Layer 6 — Editor injection (bridge files)
 Writes one editor-specific file that references `REPO_CONTEXT.md`:
-- **Claude** → a managed block in `CLAUDE.md` that `@`-imports `2repo/REPO_CONTEXT.md` (Claude Code auto-loads `CLAUDE.md` and resolves `@`-imports, so this is the only file on the load path — nothing under `.claude/` is picked up on its own)
+- **Claude** → a managed block in `CLAUDE.md` that `@`-imports `.2repo/REPO_CONTEXT.md` (Claude Code auto-loads `CLAUDE.md` and resolves `@`-imports, so this is the only file on the load path — nothing under `.claude/` is picked up on its own)
 - **Copilot** → managed block in `.github/copilot-instructions.md`
 - **Cursor** → `.cursor/rules/2repo.mdc` (a global always-apply rule)
 - **Neutral** → nothing (for local/custom setups)
 
-Regardless of target, this layer also writes two managed blocks that the
+Regardless of target, this layer also writes three managed blocks that the
 generated tree depends on:
-- **`.graphifyignore`** → lists `2repo/` and `.codeboarding/`. graphify self-prunes only the single directory it writes to, so without this it re-ingests our own wiki, arch pages and `EXECUTION.md` as source on the next extraction — generated prose feeding the next generation of it.
-- **`.gitattributes`** → marks `2repo/**` as `linguist-generated` so the committed artifacts collapse in reviews. Deliberately not `-diff`, which would suppress the textual diff locally too.
+- **`.graphifyignore`** → lists `.2repo/` and `.codeboarding/`. graphify self-prunes only the single directory it writes to, so without this it re-ingests our own wiki, arch pages and `EXECUTION.md` as source on the next extraction — generated prose feeding the next generation of it.
+- **`.gitattributes`** → marks `.2repo/**` as `linguist-generated` so the committed artifacts collapse in reviews. Deliberately not `-diff`, which would suppress the textual diff locally too.
+- **`.gitignore`** → excludes only the regeneration-only slice of `.2repo/`: graphify's raw `graph.json`/`manifest.json`/`.graphify_*` dumps (structural data, not prose — see §4's chunk selection), graphify's own AST/semantic cache, graphify's dated snapshot directories (which duplicate its live output), the wiki/module incremental content-hash caches, and `.codeboarding/` (its canonical output is already mirrored into `.2repo/arch/`). Everything else — `wiki/`, `arch/`, `modules/`, `EXECUTION.md`, `REPO_MEMORY.md`, `REPO_CONTEXT.md`, `repo-index.json` — is committed on purpose, so a teammate without 2repo/graphify installed (or without hardware to regenerate) can still read and query it.
 
 Injected blocks are wrapped in `<!-- 2repo:start --> … <!-- 2repo:end -->` markers and rewritten **only if the content changed** — so your own edits around them survive, and re-running is idempotent.
 
-### Layer 7 — Living wiki (optional, `2repo/wiki/`)
+### Layer 7 — Living wiki (optional, `.2repo/wiki/`)
 One LLM-written Markdown page per source file, plus `OVERVIEW.md`. This is the only layer that's *incremental by design* (§3), because it's the expensive one — every page is an LLM call. Generated pages are folded back into the index (layer 4) so `query` can retrieve them.
 
 **Audience: machines.** One page per file is the right granularity for retrieval and the wrong one for a human — see §8. These pages stay in the repo and are never mirrored into the vault.
 
-### Layer 7c — Module tier (`2repo/modules/`)
+### Layer 7c — Module tier (`.2repo/modules/`)
 One note per meaningful directory, written from the per-file pages rather than from source, plus a hub note. Filenames are namespaced by repository (`<repo>_src_ui.md`, `<repo>_INDEX.md`). This is the human-facing tier and the only wiki-side output mirrored into the Obsidian vault. Modules are chosen top-down over the directory tree (subtree ≤ 40 documented files becomes a module; bigger trees split into children; the result merges upward until it fits 30 modules), and their edges are the file-level dependency graph lifted to module level. Rationale and the prior art it follows: §8.
 
-### Layer 7b — Architecture layer (optional, `2repo/arch/`)
+### Layer 7b — Architecture layer (optional, `.2repo/arch/`)
 The tier *above* the per-file wiki: component/subsystem narrative pages plus **Mermaid architecture diagrams**, generated by [CodeBoarding](https://github.com/CodeBoarding/CodeBoarding) (static analysis + LLM) behind a thin adapter (`scripts/repo/arch.py`). Also opt-in and expensive; also folded back into the index (layer 4). Two design points make it swappable and safe:
-- **Isolation seam.** The CodeBoarding-specific surface is confined to a handful of helpers in `scripts/repo/arch.py` (`_run_codeboarding`, `_render_markdown`, `_codeboarding_python`, `_codeboarding_dir`, plus the `_RENDER_SCRIPT` and promo-stripping in `_clean_page`). CodeBoarding writes its native analysis + incremental baseline to `<repo>/.codeboarding/`; because this version's local mode emits only `analysis.json`, the adapter renders the Markdown itself (via `render_docs` in CodeBoarding's venv), then mirrors the pages into `2repo/arch/` (the indexed, canonical copy). Replacing the generator later means reworking only those helpers — everything downstream keys off `2repo/arch/`.
+- **Isolation seam.** The CodeBoarding-specific surface is confined to a handful of helpers in `scripts/repo/arch.py` (`_run_codeboarding`, `_render_markdown`, `_codeboarding_python`, `_codeboarding_dir`, plus the `_RENDER_SCRIPT` and promo-stripping in `_clean_page`). CodeBoarding writes its native analysis + incremental baseline to `<repo>/.codeboarding/`; because this version's local mode emits only `analysis.json`, the adapter renders the Markdown itself (via `render_docs` in CodeBoarding's venv), then mirrors the pages into `.2repo/arch/` (the indexed, canonical copy). Replacing the generator later means reworking only those helpers — everything downstream keys off `.2repo/arch/`.
 - **Deterministic provider.** CodeBoarding selects its LLM provider by which credential env var is set. Since the container may hold several keys at once, the adapter runs it with a scrubbed environment exposing only the selected provider's credentials (ollama/openai/anthropic; `claude-code` is rejected — no CLI backend). Telemetry is force-disabled.
 
 Like the wiki, it deliberately does **not** move the staleness baseline.
@@ -90,7 +91,7 @@ The bookkeeping layer that makes staleness detection possible (§2). Records the
 The question "is this repo stale?" reduces to: **has the code drifted far enough from the commit the artifacts were built at?**
 
 ### The baseline
-Every full run (`graph`, `reindex`, `remember`) ends by writing `2repo/.2repo-state.json`:
+Every full run (`graph`, `reindex`, `remember`) ends by writing `.2repo/.2repo-state.json`:
 
 ```json
 {
@@ -110,7 +111,7 @@ The `head` field is the **baseline commit** — the anchor everything is measure
 2. Compute the set of **changed files since the baseline**, which is the union of:
    - **committed drift** — `git diff --name-only <baseline>..HEAD`
    - **working-tree drift** — `git status --porcelain` (modified, staged, *and* untracked files)
-3. Exclude `2repo`'s own outputs from that set (`2repo/**`, `.cursor/**`, `.codeboarding/**`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.graphifyignore`, `.gitattributes`) — regenerating artifacts must never count as the repo changing.
+3. Exclude `2repo`'s own outputs from that set (`.2repo/**`, `.cursor/**`, `.codeboarding/**`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.graphifyignore`, `.gitattributes`) — regenerating artifacts must never count as the repo changing.
 4. Compare the count to the threshold: **stale ⇔ `threshold > 0` and `changed_count ≥ threshold`.**
 
 Exit codes make it scriptable: `0` = fresh, `2` = stale, `1` = no state yet.
@@ -175,7 +176,7 @@ flowchart LR
     S["2repo arch"] --> D{"analysis.json exists<br/>and no --force-all?"}
     D -->|"yes"| I["codeboarding incremental<br/>cheap"]
     D -->|"no"| F["codeboarding full<br/>expensive, whole repo"]
-    I --> M["mirror pages into 2repo/arch/"]
+    I --> M["mirror pages into .2repo/arch/"]
     F --> M
     F -.->|"run dies partway"| X["nothing salvaged —<br/>next run is full again"]
 ```
@@ -184,7 +185,7 @@ flowchart LR
 
 - **The first successful run is the expensive one.** It is a full analysis of the whole repo. Every run after it is incremental and much cheaper, until you pass `--force-all` or delete `.codeboarding/`.
 - **A failed run is not resumable.** CodeBoarding writes `analysis.json` at the end of a run, not progressively. If a run dies — crashed CLI, killed container, unreachable model — nothing is salvaged and the *next* run starts a full analysis again from zero. There is no partial-progress file to resume from.
-- **`--force-all` does not delete the old pages up front.** It re-runs the full analysis, then `_mirror_pages` overwrites `2repo/arch/` and prunes pages the new analysis no longer produces. So a failed `--force-all` leaves the previous pages intact.
+- **`--force-all` does not delete the old pages up front.** It re-runs the full analysis, then `_mirror_pages` overwrites `.2repo/arch/` and prunes pages the new analysis no longer produces. So a failed `--force-all` leaves the previous pages intact.
 
 Unlike the wiki, the arch layer never consults git: it does not diff against the `.2repo-state.json` baseline and does not expand along the dependency graph. Deciding what changed is entirely CodeBoarding's `fingerprint.json` business.
 
@@ -207,7 +208,7 @@ The `updated:` frontmatter timestamp deliberately records when the *body* was la
 No embeddings model, no vector database — the index is a **classic TF-IDF + cosine similarity** engine implemented in pure Python, with a pseudo-relevance-feedback twist. That keeps it dependency-light and fully local.
 
 **Building the index (`build_index`):**
-1. **Collect chunks** from: runtime metadata (1 chunk), every `.md`/`.json`/`.txt` under `2repo/` (excluding the index/state/cache files themselves), and every durable memory entry.
+1. **Collect chunks** from: runtime metadata (1 chunk), every `.md`/`.json`/`.txt` under `.2repo/` (excluding the index/state/cache files themselves, and everything under `graphify-out/` except `GRAPH_REPORT.md` — graphify's raw `graph.json`/`manifest.json`/`.graphify_*` dumps are structural data, not prose, and get walked twice over otherwise thanks to graphify's dated snapshot directories), and every durable memory entry.
 2. **Chunk** long text into paragraph-like blocks capped at 1200 chars.
 3. **Tokenize**: lowercase `[a-z0-9]{2,}` tokens, with a light plural fold (`configs` → also `config`) to improve recall. Not a real stemmer.
 4. **Weight**: `idf(t) = log((1+N)/(1+df(t))) + 1`; term weight = `(tf/max_tf) · idf`. Each chunk vector is stored sparse with its precomputed L2 norm.
@@ -260,7 +261,7 @@ Reading the table:
 - **`reindex`** rebuilds everything *above* the graph from existing artifacts — use it after editing memory or switching AI target without paying for re-extraction.
 - **`remember`** adds a fact, then rebuilds index→context→injection so the fact is immediately retrievable, and moves the state baseline.
 - **`wiki`** runs the per-file layer *and* the module tier built on top of it — the two always move together, so module links can never drift from the page set — then refreshes index+context so both are queryable. It pointedly leaves the state baseline alone (§2).
-- **`arch`** behaves exactly like `wiki` (its own optional doc layer, then index+context refresh, no state write), but produces component/topic pages + Mermaid diagrams in `2repo/arch/` instead of per-file pages. It does not run the wiki layer, and the wiki does not run it — the two are independent tiers over the same graph.
+- **`arch`** behaves exactly like `wiki` (its own optional doc layer, then index+context refresh, no state write), but produces component/topic pages + Mermaid diagrams in `.2repo/arch/` instead of per-file pages. It does not run the wiki layer, and the wiki does not run it — the two are independent tiers over the same graph.
 - **`query`** and **`check`** are read-only.
 
 ---
@@ -275,13 +276,13 @@ Reading the table:
 
 | Layer | Persisted state | Invalidated by | Cost when nothing changed |
 |---|---|---|---|
-| Graph (`graphify`) | `2repo/graphify-out/graph.json` + `manifest.json` | graphify's own manifest (per-file) | `update` walks the manifest; near-zero LLM calls |
+| Graph (`graphify`) | `.2repo/graphify-out/graph.json` + `manifest.json` | graphify's own manifest (per-file) | `update` walks the manifest; near-zero LLM calls |
 | Execution | *(none)* | nothing — always regenerated | milliseconds, no LLM (pure file scan of `package.json`, `Makefile`, `pyproject.toml`, workflows, migrations) |
-| Memory | `2repo/repo-memory.json` | `2repo remember` only | milliseconds, no LLM |
-| Index | `2repo/repo-index.json` | rebuilt in full every time; its **revision** changes when artifacts, memory, or runtime metadata change | seconds, no LLM (TF-IDF is local) |
+| Memory | `.2repo/repo-memory.json` | `2repo remember` only | milliseconds, no LLM |
+| Index | `.2repo/repo-index.json` | rebuilt in full every time; its **revision** changes when artifacts, memory, or runtime metadata change | seconds, no LLM (TF-IDF is local) |
 | Context / Injection | `REPO_CONTEXT.md` + managed blocks in `CLAUDE.md` etc. | rebuilt every time; blocks are only rewritten if the bytes differ | milliseconds, no LLM |
-| Wiki | `2repo/wiki/.wiki-cache.json` (SHA-256 per source file) | source-file content hash, or a missing page file | zero LLM calls — every page is a cache hit |
-| Modules | `2repo/modules/.modules-cache.json` (SHA-256 per module over its member pages) | a member page changed, or the module's file set moved | zero LLM calls; the deterministic wrapper is still re-rendered (free) |
+| Wiki | `.2repo/wiki/.wiki-cache.json` (SHA-256 per source file) | source-file content hash, or a missing page file | zero LLM calls — every page is a cache hit |
+| Modules | `.2repo/modules/.modules-cache.json` (SHA-256 per module over its member pages) | a member page changed, or the module's file set moved | zero LLM calls; the deterministic wrapper is still re-rendered (free) |
 | Arch | `.codeboarding/analysis.json` + `fingerprint.json` | CodeBoarding's fingerprint | one incremental CodeBoarding run (still an LLM pass, but scoped) |
 
 The dividing line: **everything except the graph, wiki, and arch layers is recomputed unconditionally**, because those layers are deterministic and free. Only the three LLM-backed layers are cached.
@@ -298,6 +299,8 @@ Its content hash changes → its wiki page regenerates, plus its 2-hop dependenc
 
 **You delete or rename a file.**
 Once the graph refreshes, the file leaves `candidates`; `_prune_stale_pages` deletes its wiki page and its `.wiki-cache.json` entry is dropped. A rename is seen as a delete + create, so the old page is pruned and a new one generated. Same caveat as above: run the graph layer (or a bare `2repo <repo>`), not `2repo wiki` alone, or the stale page survives.
+
+If the deleted file was the last member of a module, that module disappears too: `modules.py::generate` recomputes `grouped` from the current candidate set, `_prune` deletes the now-orphaned note from `.2repo/modules/`, and its `.modules-cache.json` entry is dropped. The vault follows automatically — `mirror_to_vault` calls `vault.mirror_markdown_tree`, which treats the vault's `Generated/Modules/` folder as an exact reflection of `.2repo/modules/`: it copies every current note over and `unlink()`s any destination note whose source is gone. So a module deleted (or emptied by scope) vanishes from the vault on the same run, not just from the repo-local tier. Arch pages behave the same way through `mirror_to_vault` in `arch.py` → `Generated/Architecture/`.
 
 **Nothing changed since the last run.**
 `2repo <repo>` is close to free on the LLM budget: `graphify update` finds no dirty files, every wiki page is a cache hit ("nothing to regenerate — all pages fresh"), and only the deterministic layers rewrite themselves. The arch layer is the exception — it still performs an incremental CodeBoarding run, which is real work. Use `2repo graph <repo> --update` or `2repo wiki <repo>` if you specifically want to avoid that.
@@ -329,8 +332,8 @@ A `2repo <repo>` that dies partway leaves everything the completed layers wrote 
 
 Two things are worth spelling out:
 
-- **The wiki resumes page-by-page.** `.wiki-cache.json` is written once at the end of `generate()`, but `_page_is_fresh` also requires the page file to exist — and pages are written one at a time as they are generated. So a wiki run killed at page 300 of 430 re-uses those 300 on the retry only if the cache was saved; if it was not, the 300 pages are regenerated. Prefer letting a wiki run finish.
-- **The arch layer does not resume at all** (§3c). CodeBoarding writes `analysis.json` only on success, so a crashed arch run leaves no baseline and the next attempt is another full analysis. This is the one place where a failed run costs you the whole layer.
+- **The wiki resumes page-by-page — this is 2repo's pause mechanism.** `.wiki-cache.json` is written after every page (not once at the end), and `_page_is_fresh` also requires the page file to exist. So killing a wiki run at page 300 of 430 — a deliberate Ctrl+C to pause it, or a crash — re-uses those 300 for free on the next `2repo wiki <repo>`; only the unwritten remainder costs tokens.
+- **The arch layer does not resume at all** (§3c). CodeBoarding writes `analysis.json` only on success, so a crashed *or paused* arch run leaves no baseline and the next attempt is another full analysis. This is the one place where interrupting a run costs you the whole layer — let an arch run finish, or accept redoing it.
 
 Because the state baseline is written by the graph layer and never by wiki or arch, a run that dies in the arch layer still records the graph baseline at the new HEAD. The retry therefore sees "nothing changed" for the wiki — which is correct, since the wiki already completed.
 
@@ -344,9 +347,9 @@ Because the state baseline is written by the graph layer and never by wiki or ar
 | Re-document specific files (+ their neighbors) | `2repo wiki <repo> src/a.ts src/b.ts` |
 | Preview cost without spending tokens | `2repo wiki <repo> --dry-run` / `2repo arch <repo> --dry-run` |
 | Rebuild index/context/injection from existing artifacts | `2repo reindex <repo>` |
-| Hard reset of one layer | delete `2repo/wiki/` / `.codeboarding/` / `2repo/graphify-out/` and re-run |
+| Hard reset of one layer | delete `.2repo/wiki/` / `.codeboarding/` / `.2repo/graphify-out/` and re-run |
 
-Deleting `2repo/` entirely resets everything, including the staleness baseline — the next run is a first run.
+Deleting `.2repo/` entirely resets everything, including the staleness baseline — the next run is a first run.
 
 ---
 
@@ -358,7 +361,7 @@ plainly because it drove the design of the module tier (layer 7c).
 
 ### The two audiences
 
-| | Per-file wiki (`2repo/wiki/`) | Module tier (`2repo/modules/`) |
+| | Per-file wiki (`.2repo/wiki/`) | Module tier (`.2repo/modules/`) |
 |---|---|---|
 | Read by | the semantic index, `2repo query`, `REPO_CONTEXT.md` | a human, in Obsidian |
 | Unit | one source file | one meaningful directory |

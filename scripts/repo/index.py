@@ -20,10 +20,12 @@ from shared.utils import now_iso
 
 _OUT = Path(config.OUT_DIR)
 _INDEX_SUBPATH = _OUT / "repo-index.json"
+_GRAPHIFY_OUT_DIR = Path(config.GRAPHIFY_OUT)
+_GRAPH_REPORT_PATH = _GRAPHIFY_OUT_DIR / "GRAPH_REPORT.md"
 # GRAPH_REPORT.md is graphify's own product, so it lives in the nested graphify
 # output dir; the other two are ours and sit at the root of OUT_DIR.
 _REQUIRED_ARTIFACTS = (
-    Path(config.GRAPHIFY_OUT) / "GRAPH_REPORT.md",
+    _GRAPH_REPORT_PATH,
     _OUT / "EXECUTION.md",
     _OUT / "REPO_MEMORY.md",
 )
@@ -104,7 +106,16 @@ def _chunk_plain_text(text: str) -> list[str]:
 
 
 def _artifact_files(repo: Path) -> list[Path]:
-    """Return indexable <OUT_DIR> artifact files, skipping generated index/state."""
+    """Return indexable <OUT_DIR> artifact files, skipping generated index/state.
+
+    Everything under GRAPHIFY_OUT except GRAPH_REPORT.md is excluded: graph.json,
+    manifest.json and the .graphify_* files are graphify's raw node/edge/analysis
+    dumps, not prose, so tokenizing them as text produces thousands of meaningless
+    chunks. graphify also keeps a dated snapshot of its own output alongside the
+    live copy (e.g. graphify-out/2026-08-25/) — without this exclusion that gets
+    walked too, indexing the same raw data a second time under a different path.
+    GRAPH_REPORT.md is graphify's one human/AI-readable artifact, so it stays.
+    """
     out_dir = repo / config.OUT_DIR
     if not out_dir.exists():
         return []
@@ -113,8 +124,10 @@ def _artifact_files(repo: Path) -> list[Path]:
     for path in sorted(out_dir.rglob("*")):
         if not path.is_file():
             continue
-        rel = str(path.relative_to(repo))
-        if rel in _SKIP_INDEX_PATHS:
+        rel = path.relative_to(repo)
+        if str(rel) in _SKIP_INDEX_PATHS:
+            continue
+        if rel.is_relative_to(_GRAPHIFY_OUT_DIR) and rel != _GRAPH_REPORT_PATH:
             continue
         if path.suffix.lower() not in {".md", ".json", ".txt"}:
             continue
@@ -177,11 +190,24 @@ def _compute_idf(chunk_token_sets: list[set[str]]) -> dict[str, float]:
         df.update(tokens)
     # Inner (+1) terms smooth df/docs to avoid division-by-zero and undefined log values.
     # Outer (+1.0) keeps weights positive for ranking stability when terms are very common.
-    return {token: math.log((1.0 + docs) / (1.0 + count)) + 1.0 for token, count in df.items()}
+    return {
+        token: round(math.log((1.0 + docs) / (1.0 + count)) + 1.0, _STORED_PRECISION)
+        for token, count in df.items()
+    }
+
+
+_STORED_PRECISION = 6
 
 
 def _vectorize(tokens: list[str], idf: dict[str, float]) -> tuple[dict[str, float], float]:
-    """Build a normalized TF-IDF-like sparse vector and its L2 norm."""
+    """Build a normalized TF-IDF-like sparse vector and its L2 norm.
+
+    Weights are rounded before returning: json.dumps writes Python floats at full
+    double precision (~17 significant digits), which does nothing for cosine-
+    similarity ranking but roughly doubles the serialized size of every vector —
+    multiplied by 18k+ chunks, that's several extra megabytes of digits no query
+    ever needs.
+    """
     tf = Counter(tokens)
     if not tf:
         return {}, 0.0
@@ -192,7 +218,8 @@ def _vectorize(tokens: list[str], idf: dict[str, float]) -> tuple[dict[str, floa
         if weight > 0:
             vector[token] = weight
     norm = math.sqrt(sum(value * value for value in vector.values()))
-    return vector, norm
+    vector = {token: round(weight, _STORED_PRECISION) for token, weight in vector.items()}
+    return vector, round(norm, _STORED_PRECISION)
 
 
 def _dot(a: dict[str, float], b: dict[str, float]) -> float:

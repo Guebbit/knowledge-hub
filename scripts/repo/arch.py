@@ -47,8 +47,21 @@ from shared import config
 
 _ARCH_SUBPATH = Path(config.OUT_DIR) / "arch"
 _CODEBOARDING_SUBPATH = Path(".codeboarding")
-# CodeBoarding's incremental baseline; its presence means a prior run exists.
+# CodeBoarding's incremental baseline.
 _BASELINE_FILENAME = "analysis.json"
+# CodeBoarding only writes this sidecar when a full analysis completes
+# successfully (see repo_utils/fingerprint_diff.py in the vendored package).
+# analysis.json alone is NOT proof of a usable baseline — CodeBoarding
+# overwrites it at intermediate checkpoints during the abstraction pipeline,
+# so a run killed mid-way (Ctrl-C, OOM, timeout) leaves a partial analysis.json
+# behind with no fingerprint. Treating that as a valid baseline makes 2repo
+# pick "incremental" mode, which CodeBoarding itself then can't actually do
+# (it logs `requiresFullAnalysis: true`) — but instead of failing, it silently
+# renders a degraded/garbage result from the stale snapshot and exits 0.
+# Requiring both files closes that hole: no fingerprint means no baseline, so
+# a killed run correctly falls back to a full re-analysis instead of
+# corrupting the output.
+_FINGERPRINT_FILENAME = "fingerprint.json"
 
 # Provider-credential environment variables CodeBoarding may read. We strip ALL of
 # them from the child environment and then set only the selected provider's — the
@@ -87,16 +100,21 @@ _PROVIDER_ENV_KEYS = (
     "PARSING_MODEL",
 )
 
-# Inline renderer: CodeBoarding 0.13.8's `--local` analysis writes only analysis.json
-# (the remote path renders Markdown, the local path does not), and the version ships
+# Inline renderer: CodeBoarding's `--local` analysis writes only analysis.json
+# (the remote path renders Markdown, the local path does not), and the package ships
 # no `codeboarding-render` console script. So we drive render_docs() ourselves, in
 # CodeBoarding's own venv interpreter (its workflow packages aren't importable from
 # the scripts interpreter). This is the one render-shaped detail that would change if
 # CodeBoarding is ever swapped out — kept beside _run_codeboarding on purpose.
+#
+# render_docs() lived at codeboarding_workflows.rendering through 0.13.8; 0.13.10
+# moved it to output_generators.rendering with the same signature, no announced
+# deprecation path. Since codeboarding is pinned (see Dockerfile.scripts), this only
+# needs updating on a deliberate version bump — re-check this import when you bump it.
 _RENDER_SCRIPT = """\
 import sys
 from pathlib import Path
-from codeboarding_workflows.rendering import render_docs
+from output_generators.rendering import render_docs
 
 analysis_path, out_dir, repo_name = sys.argv[1], sys.argv[2], sys.argv[3]
 render_docs(
@@ -122,7 +140,8 @@ def _codeboarding_dir(repo_path: str) -> Path:
 
 
 def _has_baseline(repo_path: str) -> bool:
-    return (_codeboarding_dir(repo_path) / _BASELINE_FILENAME).is_file()
+    cb_dir = _codeboarding_dir(repo_path)
+    return (cb_dir / _BASELINE_FILENAME).is_file() and (cb_dir / _FINGERPRINT_FILENAME).is_file()
 
 
 def _provider_env(provider: str, model: str) -> dict[str, str]:
@@ -177,7 +196,65 @@ def _provider_env(provider: str, model: str) -> dict[str, str]:
     # the resolved preset model so the whole run uses a single, predictable model.
     env["AGENT_MODEL"] = model
     env["PARSING_MODEL"] = model
+
+    # CodeBoarding hardcodes its agent-invocation timeout (300s first attempt,
+    # 600s on retry) with no native override — see Dockerfile.scripts for the
+    # build-time patch that makes it read these two env vars instead. A slow
+    # local model needs more headroom than that; since retries restart the same
+    # reasoning chain from scratch, one generous attempt beats five short ones.
+    agent_timeout = os.getenv("REPO_ARCH_AGENT_TIMEOUT")
+    if agent_timeout:
+        env["CODEBOARDING_AGENT_TIMEOUT_FIRST"] = agent_timeout
+        env["CODEBOARDING_AGENT_TIMEOUT_RETRY"] = agent_timeout
+
+    # Context-window budget (see patches/codeboarding/context_budget.py). CodeBoarding
+    # asks Ollama for the model's context length and gets the *architectural* max
+    # (262k for a Qwen-class model), not the window the server actually runs
+    # (OLLAMA_NUM_CTX) — and it never budgets against either. Its tool loop keeps
+    # appending file reads until the prompt overflows; Ollama then silently drops
+    # the oldest tokens (the task itself) and the turn fails, which CodeBoarding
+    # retries from scratch up to 5×. Tell it the real window so the patched agent
+    # stops reading before the overflow and reads in chunks sized for it.
+    window = _context_window(provider)
+    if window:
+        env["CODEBOARDING_CONTEXT_WINDOW"] = str(window)
+        env["CODEBOARDING_READ_FILE_LINES"] = str(_read_chunk_lines(window))
+
     return env
+
+
+def _context_window(provider: str) -> int | None:
+    """Usable context window for the arch run, in tokens.
+
+    REPO_ARCH_CONTEXT_TOKENS wins when set (any provider; 0 disables the budget).
+    Otherwise Ollama presets use OLLAMA_NUM_CTX — the only party that knows the
+    server-side window is our own .env. Cloud providers get None: their windows
+    are large and CodeBoarding's own catalogs describe them correctly.
+    """
+    raw = os.getenv("REPO_ARCH_CONTEXT_TOKENS", "").strip()
+    if raw:
+        if not raw.isdigit():
+            raise ValueError(f"REPO_ARCH_CONTEXT_TOKENS must be a whole number of tokens, got {raw!r}")
+        return int(raw) or None
+    if provider == "ollama":
+        return config.OLLAMA_NUM_CTX
+    return None
+
+
+# CodeBoarding's readFile returns 300 lines per call. At ~270 tokens per 100
+# numbered lines of code, that is ~1/10 of a 32k window per read — a handful of
+# reads fill the conversation before the agent has reasoned about anything.
+# Scale the chunk with the window (120 lines at 32k, 240 at 64k, stock 300
+# from ~80k up) so a small window buys more, smaller reads instead of fewer,
+# mostly-unused big ones. Never below 60: a chunk smaller than a typical
+# function is useless for the "look at this implementation" reads the tool is for.
+_READ_CHUNK_MAX_LINES = 300
+_READ_CHUNK_MIN_LINES = 60
+_READ_CHUNK_TOKENS_PER_LINE = 270
+
+
+def _read_chunk_lines(window: int) -> int:
+    return max(_READ_CHUNK_MIN_LINES, min(_READ_CHUNK_MAX_LINES, window // _READ_CHUNK_TOKENS_PER_LINE))
 
 
 def _codeboarding_python() -> str:
@@ -224,11 +301,46 @@ def _render_markdown(repo_path: str, env: dict[str, str]) -> None:
         )
 
 
-def _run_codeboarding(repo_path: str, *, provider: str, model: str, incremental: bool) -> None:
+# CodeBoarding can decide mid-incremental-run that its own baseline is unusable (its
+# static-analysis cache is versioned separately from analysis.json/fingerprint.json,
+# e.g. after a codeboarding upgrade) and abort — but it reports that by printing this
+# structured payload and still exiting 0, not via a non-zero return code. A bare
+# returncode check misses it entirely and would go on to render the old, untouched
+# analysis.json as if the run had succeeded. Match on the payload text rather than
+# json.loads-ing a line: CodeBoarding pretty-prints it (multi-line), interleaved with
+# unrelated progress output, so there is no single "the JSON is this one line" to parse.
+_REQUIRES_FULL_ANALYSIS_RE = re.compile(r'"requiresFullAnalysis"\s*:\s*true')
+
+
+def _requires_full_analysis(output: str) -> bool:
+    return bool(_REQUIRES_FULL_ANALYSIS_RE.search(output))
+
+
+def _run_codeboarding_once(cmd: list[str], repo_path: str, env: dict[str, str]) -> tuple[int, str]:
+    """Run one codeboarding subprocess, streaming its output live while also capturing it.
+
+    Live streaming matters: a run can take many minutes and CodeBoarding prints its own
+    progress (module/page counters, ETAs). Capturing is needed for _requires_full_analysis.
+    """
+    proc = subprocess.Popen(
+        cmd, cwd=repo_path, env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+    )
+    lines: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(line, end="")
+        lines.append(line)
+    return proc.wait(), "".join(lines)
+
+
+def _run_codeboarding(repo_path: str, *, provider: str, model: str, incremental: bool) -> str:
     """Invoke the CodeBoarding CLI (the only place that knows the tool's interface).
 
     Writes native output to <repo>/.codeboarding/ (analysis.json baseline), then
     renders it to Markdown in the same directory. Raises RuntimeError on failure.
+    Returns the mode actually run ("incremental" or "full") — may differ from the
+    requested mode when an incremental attempt falls back to full, see below.
     """
     env = _provider_env(provider, model)
     mode = "incremental" if incremental else "full"
@@ -236,13 +348,24 @@ def _run_codeboarding(repo_path: str, *, provider: str, model: str, incremental:
     # writes analysis.json only; Markdown is rendered by _render_markdown below.
     cmd = ["codeboarding", mode, "--local", repo_path]
     print(f"Arch     : codeboarding {mode}  provider={provider}  model={model}")
-    proc = subprocess.run(cmd, cwd=repo_path, env=env)
-    if proc.returncode != 0:
+    returncode, output = _run_codeboarding_once(cmd, repo_path, env)
+
+    if incremental and _requires_full_analysis(output):
+        print(
+            "Arch     : codeboarding's incremental baseline is stale or was written by "
+            "a different engine version — retrying as a full analysis"
+        )
+        mode = "full"
+        cmd = ["codeboarding", mode, "--local", repo_path]
+        returncode, output = _run_codeboarding_once(cmd, repo_path, env)
+
+    if returncode != 0:
         raise RuntimeError(
-            f"codeboarding {mode} exited with code {proc.returncode} — "
+            f"codeboarding {mode} exited with code {returncode} — "
             "see output above (check the provider credential/model and language-server setup)"
         )
     _render_markdown(repo_path, env)
+    return mode
 
 
 def _rendered_pages(repo_path: str) -> list[Path]:
@@ -343,9 +466,9 @@ def generate(
     back to a full analysis otherwise or when force_all is set.
     """
     incremental = _has_baseline(repo_path) and not force_all
-    mode = "incremental" if incremental else "full"
 
     if dry_run:
+        mode = "incremental" if incremental else "full"
         reason = (
             "baseline present" if incremental
             else ("--force-all" if force_all else "no baseline yet")
@@ -353,7 +476,9 @@ def generate(
         print(f"Arch     : would run codeboarding {mode} ({reason}) — no LLM calls made")
         return {"artifact": str(_ARCH_SUBPATH), "dry_run": True, "mode": mode}
 
-    _run_codeboarding(repo_path, provider=provider, model=model, incremental=incremental)
+    # May run "full" even when incremental was requested — see _run_codeboarding's
+    # stale-baseline fallback — so the summary reflects what actually ran.
+    mode = _run_codeboarding(repo_path, provider=provider, model=model, incremental=incremental)
 
     written, removed = _mirror_pages(repo_path)
     if not written:
