@@ -247,7 +247,7 @@ DEFAULT_PRESET=deep              # or make it the default
 
 Repo mode can use its own defaults via `REPO_PRESET_GRAPH` and `REPO_PRESET_WIKI`. See the docs for the full preset story.
 
-> **Only have a GitHub Copilot subscription — no API key, no GPU?** You can still run `2brain` and `2repo wiki`/`query` on the Copilot CLI. See **[docs/copilot-only.md](docs/copilot-only.md)** for the setup and what the graph/arch layers need instead.
+> **Only have a GitHub Copilot subscription — no API key, no GPU?** You can still run `2brain`'s note capture and its `wiki`/`query` subcommands on the Copilot CLI. See **[docs/copilot-only.md](docs/copilot-only.md)** for the setup and what the graph/arch layers need instead.
 
 ---
 

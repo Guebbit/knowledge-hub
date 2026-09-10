@@ -87,8 +87,8 @@ hardened of the two:
 | Sandboxing | none | tools disabled (`--available-tools none`), `--disable-builtin-mcps`, `--no-custom-instructions`, runs in a temp cwd so it can't scan the target repo |
 | Auth-failure behaviour | dies | detects auth errors and offers a local Ollama fallback |
 
-Why the extra hardening on `copilot-cli`? Because `2repo` feeds **untrusted
-repository content** into prompts, so that adapter forces a hermetic, text-only
+Why the extra hardening on `copilot-cli`? Because `2brain`'s repo-intelligence
+layers feed **untrusted repository content** into prompts, so that adapter forces a hermetic, text-only
 completion with every tool switched off. See the security note in
 [providers.py](../scripts/shared/providers.py).
 
@@ -106,11 +106,11 @@ Not every layer can use every provider. The CLI providers only back the
 
 | Command | API providers | `copilot-cli` / `claude-code` | Why |
 |---|---|---|---|
-| `2brain "…"` | ✅ | ✅ | Goes through `call_llm`. |
-| `2repo wiki` | ✅ | ✅ | Goes through `call_llm`. |
-| `2repo query` | ✅ | ✅ | Goes through `call_llm`. |
-| `2repo graph` | ✅ | ❌ | Drives **graphify**, which calls provider APIs directly — no CLI backend. |
-| `2repo arch` | ✅ | ❌ | Drives **CodeBoarding**, which accepts only `openai` / `anthropic` / `ollama`. |
+| `2brain -q "…"` | ✅ | ✅ | Goes through `call_llm`. |
+| `2brain wiki` | ✅ | ✅ | Goes through `call_llm`. |
+| `2brain query` | ✅ | ✅ | Goes through `call_llm`. |
+| `2brain graph` | ✅ | ❌ | Drives **graphify**, which calls provider APIs directly — no CLI backend. |
+| `2brain arch` | ✅ | ❌ | Drives **CodeBoarding**, which accepts only `openai` / `anthropic` / `ollama`. |
 
 `graphify` and `CodeBoarding` are third-party libraries that never touch
 knowledge-hub's `call_llm` path, so they can't be pointed at a CLI provider.
@@ -150,9 +150,9 @@ Switch per call with `--preset <name>` regardless of `DEFAULT_PRESET`.
 
 - [docs/copilot-only.md](copilot-only.md) — full setup for running on a Copilot
   subscription with no API key and no GPU, including the one graph/arch gotcha.
-- [docs/2brain.md](2brain.md#presets--mixing-local-and-paid-models) — presets in
+- [docs/2brain-quick.md](2brain-quick.md#presets--mixing-local-and-paid-models) — presets in
   the context of note capture.
-- [docs/2repo.md](2repo.md) — the per-layer preset selection rules
+- [docs/2brain.md](2brain.md#2brain-configuration-env) — the per-layer preset selection rules
   (`REPO_PRESET_GRAPH` / `REPO_PRESET_WIKI` / `REPO_PRESET_ARCH`).
 - [docs/ollama.md](ollama.md) — running the local model behind the `ollama`
   provider.
