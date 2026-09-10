@@ -108,7 +108,7 @@ flowchart TD
     G --> IDX["repo-index.json<br/>semantic index"]
     G --> CTX["REPO_CONTEXT.md<br/>canonical context"]
     G --> BR["one editor bridge file<br/>CLAUDE.md / Copilot / Cursor"]
-    W --> WA[".2brain/wiki/"]
+    W --> WA[".2brain/llm-wiki/ + .2brain/wiki/"]
     A --> AA[".2brain/arch/<br/>+ Mermaid diagrams"]
 
     CTX --> BR
@@ -133,20 +133,20 @@ After a successful run, the target repository gets:
 │   │   ├── graph.json
 │   │   ├── manifest.json
 │   │   └── graph.html
-│   ├── wiki/                  # per-file pages — machine tier, not mirrored
+│   ├── llm-wiki/               # per-file pages — machine tier, not mirrored
 │   │   ├── OVERVIEW.md
 │   │   ├── <path_with_underscores>.md
-│   │   └── .wiki-cache.json
-│   ├── modules/               # per-module notes — human tier, mirrored to the vault
+│   │   └── .llm-wiki-cache.json
+│   ├── wiki/                   # per-module notes — human tier, mirrored to the vault
 │   │   ├── <repo>_INDEX.md
 │   │   ├── <repo>_<module_with_underscores>.md
-│   │   └── .modules-cache.json
+│   │   └── .wiki-cache.json
 │   ├── arch/                  # optional, only after 2brain arch
 │   │   ├── overview.md
 │   │   └── <Component>.md
 │   └── .2brain-state.json
 ├── .2brainignore               # hand-editable: which files 2brain documents
-├── .graphifyignore            # managed block: keeps .2brain/ out of the graph
+├── .graphifyignore            # managed block, only when needed: keeps .2brain/ out of the graph
 ├── .gitattributes             # managed block: marks .2brain/ generated
 └── .gitignore                 # managed block: excludes regen-only caches/dupes
 ```
@@ -215,11 +215,13 @@ The command-line flag always beats the env var, which always beats auto-detectio
 | `.2brain/repo-index.json` | Semantic retrieval index used by `2brain query` |
 | `.2brain/REPO_CONTEXT.md` | Canonical context synthesized for AI assistant consumption |
 | `.2brain/.2brain-state.json` | Baseline commit + metadata used for staleness checks and hooks |
-| `.2brain/wiki/*.md` | Living wiki: per-file documentation pages + `OVERVIEW.md` (via `2brain wiki`) |
-| `.2brain/wiki/.wiki-cache.json` | Content-hash cache enabling incremental wiki regeneration |
+| `.2brain/llm-wiki/*.md` | Per-file LLM wiki: machine-oriented documentation pages + `OVERVIEW.md` (via `2brain wiki`) |
+| `.2brain/llm-wiki/.llm-wiki-cache.json` | Content-hash cache enabling incremental per-file regeneration |
+| `.2brain/wiki/*.md` | Living wiki: one note per meaningful directory + `INDEX.md`, mirrored to the vault (via `2brain wiki`) |
+| `.2brain/wiki/.wiki-cache.json` | Content-hash cache enabling incremental module-note regeneration |
 | `.2brain/arch/*.md` | Architecture layer: component/topic pages with Mermaid diagrams + `overview.md` (via `2brain arch`) |
 | `.codeboarding/` | CodeBoarding's native working/baseline dir (incremental baseline for `2brain arch`); machine-owned |
-| `.graphifyignore` | Managed block keeping `.2brain/` and `.codeboarding/` out of graphify's source scan |
+| `.graphifyignore` | Managed block keeping generated dirs out of graphify's source scan — written **only** for dirs `.gitignore` does not already exclude, and not written at all when it covers them all |
 | `.gitattributes` | Managed block marking `.2brain/**` as generated so it collapses in reviews |
 | `.gitignore` | Managed block excluding regeneration-only caches and duplicates (graphify's raw dumps, its dated snapshot dirs, the wiki/module incremental caches, `.codeboarding/`) — everything else under `.2brain/` is committed |
 | `CLAUDE.md` | Managed block that `@`-imports `REPO_CONTEXT.md` into every Claude Code session |
@@ -303,13 +305,13 @@ The command-line flag always beats the env var, which always beats auto-detectio
 
 ## Living wiki (`2brain wiki`)
 
-**What it is:** DeepWiki-style living documentation — one readable Markdown page per source file, plus a top-level `OVERVIEW.md`, written to `.2brain/wiki/`. Pages describe purpose, key elements, and graph relationships so humans and AI can understand a file without reading it.
+**What it is:** DeepWiki-style living documentation — one readable Markdown page per source file, plus a top-level `OVERVIEW.md`, written to `.2brain/llm-wiki/`. Pages describe purpose, key elements, and graph relationships so humans and AI can understand a file without reading it.
 
 **Incrementality is the core design** (this is what makes LLM documentation affordable):
 
 1. Changed files are detected via `git diff` against the `.2brain-state.json` baseline commit (or pass explicit files: `2brain wiki <repo> src/auth.ts`)
 2. The changed set expands to dependency-graph neighbors up to **2 hops** (from `.2brain/graphify-out/graph.json`)
-3. A per-file content-hash cache (`.2brain/wiki/.wiki-cache.json`) skips pages whose source did not change — untouched pages cost zero tokens
+3. A per-file content-hash cache (`.2brain/llm-wiki/.llm-wiki-cache.json`) skips pages whose source did not change — untouched pages cost zero tokens
 4. Pages whose source file disappeared are pruned automatically
 
 Page naming replaces `/` and `.` with `_` (e.g. `src/auth/login.ts` → `src_auth_login_ts.md`).
@@ -318,7 +320,7 @@ Model selection: `--preset NAME` > `REPO_PRESET_WIKI` > `REPO_PRESET_GRAPH` > de
 
 After generation the wiki pages are folded into the semantic index (`2brain query` retrieves them) and referenced from `REPO_CONTEXT.md`. Wiki pages are **generated artifacts — never edit them by hand**; regenerate with `2brain wiki <repo>`.
 
-**These pages are the machine tier and are not mirrored into the vault.** One page per file is the right granularity for retrieval and the wrong one for a human. The same run builds the [module tier](#module-tier-2brainmodules) on top of them, and that is what reaches Obsidian. Keep human-written project notes in `vault/Projects/<repo-name>/Notes/` so they are never touched by a refresh.
+**These pages are the machine tier and are not mirrored into the vault.** One page per file is the right granularity for retrieval and the wrong one for a human. The same run builds the [module tier](#module-tier-2brainwiki) on top of them, and that is what reaches Obsidian. Keep human-written project notes in `vault/Projects/<repo-name>/Notes/` so they are never touched by a refresh.
 
 Post-commit automation: `2brain hook` always adds a wiki refresh reminder to the stale warning. Set `REPO_WIKI_AUTO=1` before running `2brain hook` to make the hook run `2brain wiki .` automatically after commits (requires the `2brain` alias on the host).
 
@@ -338,7 +340,7 @@ Like the wiki, the architecture layer is **opt-in and expensive** (never run by 
 
 > Swappable by design: if CodeBoarding is ever abandoned, only two helpers in `scripts/repo/arch.py` (`_run_codeboarding` and `_codeboarding_dir`) know the tool — replace them with another generator that emits Markdown into `<repo>/.codeboarding/` and the rest (indexing, context, CLI) is unchanged.
 
-## Module tier (`.2brain/modules/`)
+## Module tier (`.2brain/wiki/`)
 
 **What it is:** one note per meaningful directory — the tier between the per-file wiki and the whole-repo architecture view. This is what you read, and the only wiki-side output mirrored into the Obsidian vault.
 
@@ -390,9 +392,9 @@ vault/Projects/<repo-name>/
     └── Architecture/          # CodeBoarding component pages + Mermaid diagrams
 ```
 
-Per-file wiki pages are **not** mirrored: they stay in `<repo>/.2brain/wiki/` where the AI reads them. Earlier versions did mirror them flat into `Generated/`; the next wiki run clears that legacy output automatically and reports how many notes it removed.
+Per-file wiki pages are **not** mirrored: they stay in `<repo>/.2brain/llm-wiki/` where the AI reads them. Earlier versions did mirror them flat into `Generated/`; the next wiki run clears that legacy output automatically and reports how many notes it removed.
 
-**The mirror is exact, both directions.** `Generated/Modules/` and `Generated/Architecture/` are re-synced from `.2brain/modules/` and `.2brain/arch/` on every `wiki`/`arch` run: changed notes are re-copied, and any vault note whose source note no longer exists is deleted — not just skipped. So removing a module (delete its files, or narrow `.2brainignore` until it has none left) removes that module's page from `.2brain/modules/` *and* from the vault on the next run; editing a file updates its module's note in both places the same way. As with per-file pruning, this only fires once the **graph** layer has seen the change — run a bare `2brain <repo>` (or `2brain graph <repo>` first) rather than `2brain wiki <repo>` alone after deleting or renaming files.
+**The mirror is exact, both directions.** `Generated/Modules/` and `Generated/Architecture/` are re-synced from `.2brain/wiki/` and `.2brain/arch/` on every `wiki`/`arch` run: changed notes are re-copied, and any vault note whose source note no longer exists is deleted — not just skipped. So removing a module (delete its files, or narrow `.2brainignore` until it has none left) removes that module's page from `.2brain/wiki/` *and* from the vault on the next run; editing a file updates its module's note in both places the same way. As with per-file pruning, this only fires once the **graph** layer has seen the change — run a bare `2brain <repo>` (or `2brain graph <repo>` first) rather than `2brain wiki <repo>` alone after deleting or renaming files.
 
 
 ## Re-running: what recomputes, what is cached
@@ -402,8 +404,8 @@ Per-file wiki pages are **not** mirrored: they stay in `<repo>/.2brain/wiki/` wh
 | Layer | Cached in | Re-runs when |
 |---|---|---|
 | Graph | `.2brain/graphify-out/manifest.json` | a file changed (delegated to `graphify update`) |
-| Wiki | `.2brain/wiki/.wiki-cache.json` | the source file's SHA-256 changed, or the page is missing |
-| Modules | `.2brain/modules/.modules-cache.json` | any per-file page inside the module changed, or its file set moved |
+| LLM Wiki | `.2brain/llm-wiki/.llm-wiki-cache.json` | the source file's SHA-256 changed, or the page is missing |
+| Wiki | `.2brain/wiki/.wiki-cache.json` | any per-file page inside the module changed, or its file set moved |
 | Arch | `.codeboarding/analysis.json` | every arch run (incremental if the baseline exists, full otherwise) |
 | Execution / Memory / Index / Context / Injection | *(not cached)* | always — they are free |
 

@@ -1,93 +1,103 @@
 """
-Living wiki generator for 2brain (Karpathy / DeepWiki-style llm-wiki concept).
+Module tier for 2brain — the human-facing layer between per-file pages and the
+whole-architecture view.
 
-Turns the graphify dependency graph into readable per-file wiki pages plus a
-top-level overview, written to <repo>/<OUT_DIR>/wiki/.
+WHY THIS EXISTS
+───────────────────────────────────────────────────────────────────────────────
+The per-file wiki (repo/llm_wiki.py) is written for machines: one page per source
+file, hundreds of them, consumed through the semantic index and REPO_CONTEXT.md
+so an AI never has to open the file itself. Mirrored into an Obsidian vault it
+is unreadable — a thousand disconnected nodes that bury hand-written notes.
 
-Incrementality is the core design:
-- only changed files (git diff vs the .2brain-state.json baseline) are candidates
-- the changed set is expanded to graph neighbors up to 2 hops
-- a per-file content-hash cache skips pages whose source did not change
+Every mature tool in this space solves that the same way: document *units of
+meaning*, not files. DeepWiki emits a few dozen topic pages; CodeBoarding (our
+arch layer) emits component pages. Obsidian practice calls the same shape a Map
+of Content — hub notes that index a domain so the graph reads as hubs and spokes
+instead of a hairball.
 
-Page naming replaces `/` and `.` with `_` (e.g. src/auth/login.ts → src_auth_login_ts.md).
+This module is that tier: one note per meaningful directory, linked to the other
+modules it actually depends on (edges taken from the real dependency graph), plus
+an INDEX hub linking to all of them. Roughly 20–30 notes for a large repo instead
+of 900, and they are the only wiki-side artifacts mirrored into the vault. Written
+to <repo>/<OUT_DIR>/wiki/ — the human-facing counterpart to the per-file
+llm-wiki tier.
 
-AUDIENCE: this tier is written for machines. One page per source file is the
-right granularity for the semantic index and REPO_CONTEXT.md — an AI resolves a
-question without opening the file — and the wrong granularity for a human, who
-would face hundreds of near-identical notes. So per-file pages stay in the repo
-and are never mirrored into the vault; repo/modules.py builds the human-facing
-tier on top of them. See docs/2brain-internals.md §8.
+COST
+───────────────────────────────────────────────────────────────────────────────
+Module notes are written from the *already generated* per-file page summaries,
+not from source, so a full module tier is ~25 LLM calls rather than ~900. A
+content hash over each module's member pages keeps re-runs free when nothing in
+the module changed.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
-from repo.scope import Scope
-from repo.vault import repo_display_name
+from repo.vault import mirror_markdown_tree, repo_display_name
 from shared import config
-from shared.config import GENERATED_DIR_PREFIXES
 from shared.progress import Progress
 from shared.providers import call_llm
 from shared.utils import now_iso
 
 _WIKI_SUBPATH = Path(config.OUT_DIR) / "wiki"
 _CACHE_FILENAME = ".wiki-cache.json"
-_OVERVIEW_FILENAME = "OVERVIEW.md"
-# graph.json is graphify's own output, so it lives in the nested graphify dir.
-_GRAPH_JSON_SUBPATH = Path(config.GRAPHIFY_OUT) / "graph.json"
+_INDEX_FILENAME = "INDEX.md"
+_ROOT_MODULE = ""
+_ROOT_PAGE_NAME = "ROOT"
 
-_NEIGHBOR_HOPS = 2
-_MAX_FILE_CHARS = 12000
-_MAX_NEIGHBORS_IN_PROMPT = 15
-_MAX_OVERVIEW_FILES = 60
+# Splitting thresholds. A directory becomes its own module when its subtree holds
+# at most _MAX_FILES_PER_MODULE files; bigger subtrees are split into their
+# children. _MAX_MODULES then merges the smallest modules upward so the vault
+# graph stays legible — past ~30 hubs the picture stops being readable, which is
+# the whole problem this tier exists to solve.
+_MAX_FILES_PER_MODULE = 40
+_MAX_MODULES = 30
+_MAX_FILES_IN_PROMPT = 40
+_MAX_LINKS_IN_NOTE = 15
+# Edge budget for the INDEX diagram. A module graph can in principle hold
+# n(n-1)/2 edges (435 at 30 modules); past roughly this many the picture stops
+# being a map and becomes the hairball this tier exists to avoid, so the least
+# structurally interesting edges are dropped and the diagram says so.
+_MAX_DIAGRAM_EDGES = 70
 
-_PAGE_PROMPT = """You are writing one page of a living wiki that documents a codebase for both humans and AI assistants.
+_MODULE_PROMPT = """You are writing one page of a codebase wiki, at the level of a module (a directory), not a single file.
 
-Write a concise Markdown wiki page for the file `{rel_path}`.
+Write a concise Markdown page for the module `{module}`.
 
 Structure:
-# {rel_path}
-## Purpose — one short paragraph: what this file does and why it exists.
-## Key elements — bullet list of the important functions/classes/exports and what each does.
-## Relationships — how it interacts with its graph neighbors (listed below). Only mention real interactions.
-## Notes — gotchas, conventions, or anything non-obvious. Omit this section if there is nothing meaningful.
+## Purpose — one short paragraph: what this module is responsible for.
+## Key parts — bullet list of the most important files/areas inside it and what each contributes. Group related files rather than listing every one.
+## How it connects — how this module relates to the modules listed as dependencies below. Only describe real relationships.
+## Where to start — one or two files a newcomer should read first, and why.
 
-Graph neighbors (files related via the dependency graph):
-{neighbors}
-
-File content:
-```
-{content}
-```
-
-Rules:
-- Output ONLY the Markdown page, no preamble, no code fences around the whole page.
-- Be factual: describe only what is visible in the content. Never invent behavior.
-- Keep it short — this page is read to AVOID reading the file itself."""
-
-_OVERVIEW_PROMPT = """You are writing the top-level overview page of a living wiki for a codebase.
-
-Write a concise Markdown page titled "# Repository Overview" that orients a first-time reader (human or AI):
-- What the repository appears to do (infer only from the evidence below).
-- The main areas/modules and how they relate.
-- Where to start reading.
-
-Documented files (from the dependency graph):
+Files in this module (with their documented purpose):
 {files}
 
-Graph summary:
-{graph_summary}
+Modules this one is connected to in the dependency graph:
+{links}
 
 Rules:
-- Output ONLY the Markdown page, no preamble.
-- Be factual and short. Never invent features that are not evidenced."""
+- Output ONLY the Markdown page body, starting at "## Purpose". No title heading, no preamble, no code fences around the whole page.
+- Be factual: describe only what the evidence below supports. Never invent behavior.
+- Aim for something a newcomer reads in under a minute."""
+
+_INDEX_PROMPT = """You are writing the landing page of a codebase wiki.
+
+Write a short Markdown introduction (2-4 sentences, no heading) for the repository `{repo}`, orienting a first-time reader: what it appears to be, and how its modules are organized.
+
+Modules:
+{modules}
+
+Rules:
+- Output ONLY the prose. No heading, no bullet list, no preamble.
+- Be factual and brief. Never invent features the module names do not support."""
 
 
 def wiki_dir(repo_path: str) -> Path:
-    """Return the wiki output directory for a repository."""
     return Path(repo_path) / _WIKI_SUBPATH
 
 
@@ -95,8 +105,158 @@ def _cache_file(repo_path: str) -> Path:
     return wiki_dir(repo_path) / _CACHE_FILENAME
 
 
+def page_name_for(module: str, repo_name: str) -> str:
+    """Return the note filename for a module path (src/auth → <repo>_src_auth.md).
+
+    The repo name is part of the filename because the vault is shared across
+    projects: without it, two repos that both have `src/ui/` produce two
+    `src_ui.md` notes, and an Obsidian wikilink between them would be ambiguous —
+    silently welding two project graphs together, which is exactly the mess this
+    tier exists to prevent. Obsidian resolves `[[...]]` by filename across the
+    whole vault, so uniqueness has to be in the name itself.
+
+    Never collides with a per-file wiki page either: those always end in the
+    file's extension (`src/auth.ts` → `src_auth_ts.md`).
+    """
+    leaf = _ROOT_PAGE_NAME if module == _ROOT_MODULE else module.replace("/", "_")
+    return f"{repo_name}_{leaf}.md"
+
+
+def index_name_for(repo_name: str) -> str:
+    """Return the hub note filename for a repository (namespaced, same as modules)."""
+    return f"{repo_name}_{_INDEX_FILENAME}"
+
+
+def module_title(module: str) -> str:
+    return "/ (repository root)" if module == _ROOT_MODULE else module + "/"
+
+
+def _parent(directory: str) -> str:
+    return directory.rpartition("/")[0] if "/" in directory else _ROOT_MODULE
+
+
+def _directory_of(rel_path: str) -> str:
+    return rel_path.rpartition("/")[0] if "/" in rel_path else _ROOT_MODULE
+
+
+def select_modules(files: list[str]) -> dict[str, list[str]]:
+    """Group files into modules by directory, splitting big trees and merging small ones.
+
+    Top-down: a directory whose whole subtree fits in _MAX_FILES_PER_MODULE
+    becomes one module; anything larger is split into its children, with files
+    sitting directly in the split directory kept as a module of their own. The
+    result is then merged upward until it fits _MAX_MODULES.
+    """
+    if not files:
+        return {}
+
+    direct: dict[str, list[str]] = {}
+    for rel in files:
+        direct.setdefault(_directory_of(rel), []).append(rel)
+
+    # Subtree totals and the child-directory map, both keyed by directory.
+    subtree: dict[str, int] = {}
+    children: dict[str, set[str]] = {}
+    for directory, members in direct.items():
+        node = directory
+        subtree[node] = subtree.get(node, 0) + len(members)
+        while node != _ROOT_MODULE:
+            parent = _parent(node)
+            children.setdefault(parent, set()).add(node)
+            subtree[parent] = subtree.get(parent, 0) + len(members)
+            node = parent
+    subtree.setdefault(_ROOT_MODULE, 0)
+
+    selected: set[str] = set()
+
+    def visit(directory: str) -> None:
+        kids = children.get(directory, set())
+        if subtree.get(directory, 0) <= _MAX_FILES_PER_MODULE or not kids:
+            selected.add(directory)
+            return
+        for child in kids:
+            visit(child)
+        if direct.get(directory):
+            selected.add(directory)
+
+    visit(_ROOT_MODULE)
+
+    grouped = _assign(files, selected)
+
+    # Merge the smallest modules into their parent until the count is legible.
+    # Promoting a module to its parent does not always reduce the count on the
+    # step that does it (the parent can absorb the child's files while the other
+    # children stay separate), so bail out if a pass makes no progress rather
+    # than risk spinning.
+    while len(grouped) > _MAX_MODULES:
+        mergeable = [m for m in grouped if m != _ROOT_MODULE]
+        if not mergeable:
+            break
+        smallest = min(mergeable, key=lambda m: (len(grouped[m]), m))
+        selected.discard(smallest)
+        selected.add(_parent(smallest))
+        merged = _assign(files, selected)
+        if set(merged) == set(grouped):
+            break
+        grouped = merged
+    return grouped
+
+
+def _assign(files: list[str], selected: set[str]) -> dict[str, list[str]]:
+    """Assign every file to its longest selected directory prefix."""
+    grouped: dict[str, list[str]] = {}
+    for rel in files:
+        node = _directory_of(rel)
+        while node not in selected and node != _ROOT_MODULE:
+            node = _parent(node)
+        grouped.setdefault(node, []).append(rel)
+    return {module: sorted(members) for module, members in grouped.items() if members}
+
+
+def module_adjacency(
+    grouped: dict[str, list[str]], adjacency: dict[str, set[str]]
+) -> dict[str, set[str]]:
+    """Lift the file-level dependency graph to module level (self-edges dropped)."""
+    module_of = {rel: module for module, members in grouped.items() for rel in members}
+    lifted: dict[str, set[str]] = {module: set() for module in grouped}
+    for source, targets in adjacency.items():
+        src_module = module_of.get(source)
+        if src_module is None:
+            continue
+        for target in targets:
+            dst_module = module_of.get(target)
+            if dst_module is None or dst_module == src_module:
+                continue
+            lifted[src_module].add(dst_module)
+            lifted[dst_module].add(src_module)
+    return lifted
+
+
+_PURPOSE_PATTERN = re.compile(r"^##\s*Purpose\s*$(.*?)(?=^##\s|\Z)", re.MULTILINE | re.DOTALL)
+
+
+def file_purpose(page_text: str) -> str:
+    """Pull the one-line purpose out of a generated per-file wiki page."""
+    match = _PURPOSE_PATTERN.search(page_text)
+    body = match.group(1) if match else page_text
+    for line in body.strip().splitlines():
+        cleaned = line.strip().lstrip("-*").strip()
+        if cleaned and not cleaned.startswith("#"):
+            return cleaned
+    return ""
+
+
+def _member_digest(members: list[str], page_texts: dict[str, str]) -> str:
+    hasher = hashlib.sha256()
+    for rel in members:
+        hasher.update(rel.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(page_texts.get(rel, "").encode("utf-8"))
+        hasher.update(b"\0")
+    return hasher.hexdigest()
+
+
 def _load_cache(repo_path: str) -> dict[str, dict[str, str]]:
-    """Load the per-file hash cache; tolerate a missing or corrupt file."""
     path = _cache_file(repo_path)
     if not path.exists():
         return {}
@@ -104,337 +264,322 @@ def _load_cache(repo_path: str) -> dict[str, dict[str, str]]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return {}
-    pages = data.get("pages") if isinstance(data, dict) else None
-    return pages if isinstance(pages, dict) else {}
+    modules = data.get("modules") if isinstance(data, dict) else None
+    return modules if isinstance(modules, dict) else {}
 
 
-def _save_cache(repo_path: str, pages: dict[str, dict[str, str]]) -> None:
+def _save_cache(repo_path: str, modules: dict[str, dict[str, str]]) -> None:
     path = _cache_file(repo_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"version": 1, "updated_at": now_iso(), "pages": pages}
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def page_name_for(rel_path: str) -> str:
-    """Return the wiki page filename for a source file (src/a.ts → src_a_ts.md)."""
-    return rel_path.replace("/", "_").replace(".", "_") + ".md"
-
-
-def _hash_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _node_path(node: object) -> str | None:
-    """Extract a repo-relative file path from a graph node of unknown shape.
-
-    `source_file` comes first: graphify 0.9.x emits symbol-level nodes whose
-    `id` is a mangled slug ("husky_applypatch_msg"), not a path — trusting `id`
-    there yields a file set that matches nothing on disk. `id`/`name` stay last
-    for older graphs whose nodes carried the path in one of those keys.
-    """
-    if isinstance(node, str):
-        return node
-    if not isinstance(node, dict):
-        return None
-    for key in ("source_file", "path", "file", "file_path", "filepath", "id", "name"):
-        value = node.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def _node_id(node: object) -> str | None:
-    """Extract the identifier that graph edges use to reference this node."""
-    if isinstance(node, str):
-        return node
-    if not isinstance(node, dict):
-        return None
-    for key in ("id", "name", "path", "file"):
-        value = node.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def _edge_endpoints(edge: object) -> tuple[str, str] | None:
-    """Extract (source, target) file identifiers from a graph edge of unknown shape."""
-    if not isinstance(edge, dict):
-        return None
-    for src_key, dst_key in (("source", "target"), ("from", "to"), ("src", "dst")):
-        src = edge.get(src_key)
-        dst = edge.get(dst_key)
-        if isinstance(src, str) and isinstance(dst, str) and src and dst:
-            return src, dst
-    return None
-
-
-def load_graph(repo_path: str) -> tuple[set[str], dict[str, set[str]]]:
-    """Load graphify's graph.json → (file set, undirected adjacency map).
-
-    Parses defensively: node/edge key names vary across graphify versions.
-    Returns empty structures when the graph file is missing or unreadable.
-    """
-    graph_path = Path(repo_path) / _GRAPH_JSON_SUBPATH
-    if not graph_path.exists():
-        return set(), {}
-    try:
-        data = json.loads(graph_path.read_text(encoding="utf-8", errors="replace"))
-    except json.JSONDecodeError:
-        return set(), {}
-    if not isinstance(data, dict):
-        return set(), {}
-
-    files: set[str] = set()
-    # Edges reference nodes by id, which is not the file path on symbol-level
-    # graphs — keep the mapping so endpoints can be resolved back to files.
-    path_by_id: dict[str, str] = {}
-    raw_nodes = data.get("nodes") or data.get("files") or []
-    if isinstance(raw_nodes, list):
-        for node in raw_nodes:
-            path = _node_path(node)
-            if not path:
-                continue
-            path = path.lstrip("./")
-            files.add(path)
-            node_id = _node_id(node)
-            if node_id:
-                path_by_id[node_id] = path
-
-    adjacency: dict[str, set[str]] = {}
-    raw_edges = data.get("edges") or data.get("links") or data.get("relations") or []
-    if isinstance(raw_edges, list):
-        for edge in raw_edges:
-            endpoints = _edge_endpoints(edge)
-            if not endpoints:
-                continue
-            src = path_by_id.get(endpoints[0], endpoints[0]).lstrip("./")
-            dst = path_by_id.get(endpoints[1], endpoints[1]).lstrip("./")
-            # Symbol-level graphs produce many intra-file edges; a file being its
-            # own neighbor adds nothing to a wiki page's Relationships section.
-            if src == dst:
-                continue
-            adjacency.setdefault(src, set()).add(dst)
-            adjacency.setdefault(dst, set()).add(src)
-    return files, adjacency
-
-
-def expand_neighbors(seeds: set[str], adjacency: dict[str, set[str]], hops: int = _NEIGHBOR_HOPS) -> set[str]:
-    """Expand a file set to its graph neighbors up to `hops` hops (BFS)."""
-    expanded = set(seeds)
-    frontier = set(seeds)
-    for _ in range(max(0, hops)):
-        next_frontier: set[str] = set()
-        for node in frontier:
-            next_frontier.update(adjacency.get(node, set()) - expanded)
-        if not next_frontier:
-            break
-        expanded.update(next_frontier)
-        frontier = next_frontier
-    return expanded
-
-
-def _is_documentable(repo: Path, rel_path: str, scope: Scope | None = None) -> bool:
-    """Only document real repo files that are in scope and not generated artifacts."""
-    if scope is not None and not scope.matches(rel_path):
-        return False
-    # GENERATED_DIR_PREFIXES is the shared 2brain-generated set; .git/ is added
-    # here because the wiki also must never document version-control internals.
-    if rel_path.startswith(GENERATED_DIR_PREFIXES + (".git/",)):
-        return False
-    path = repo / rel_path
-    if not path.is_file():
-        return False
-    try:
-        with path.open("rb") as handle:
-            return b"\0" not in handle.read(4096)
-    except OSError:
-        return False
-
-
-def _read_truncated(path: Path) -> str:
-    text = path.read_text(encoding="utf-8", errors="replace")
-    if len(text) > _MAX_FILE_CHARS:
-        text = text[:_MAX_FILE_CHARS] + "\n... [truncated]"
-    return text
-
-
-def _generate_page(repo: Path, rel_path: str, neighbors: set[str]) -> str:
-    """Ask the LLM for one wiki page and return its Markdown content."""
-    neighbor_lines = "\n".join(f"- {n}" for n in sorted(neighbors)[:_MAX_NEIGHBORS_IN_PROMPT]) or "- (none)"
-    prompt = _PAGE_PROMPT.format(
-        rel_path=rel_path,
-        neighbors=neighbor_lines,
-        content=_read_truncated(repo / rel_path),
+    path.write_text(
+        json.dumps({"version": 1, "updated_at": now_iso(), "modules": modules}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
-    return call_llm(prompt).strip() + "\n"
 
 
-def _generate_overview(files: list[str], adjacency: dict[str, set[str]]) -> str:
-    """Ask the LLM for the top-level overview page."""
-    listed = files[:_MAX_OVERVIEW_FILES]
-    file_lines = "\n".join(f"- {f}" for f in listed)
-    if len(files) > _MAX_OVERVIEW_FILES:
-        file_lines += f"\n- ... and {len(files) - _MAX_OVERVIEW_FILES} more"
-    hubs = sorted(adjacency, key=lambda node: len(adjacency[node]), reverse=True)[:10]
-    graph_summary = "\n".join(f"- {node} connects to {len(adjacency[node])} files" for node in hubs) or "- (no edges)"
-    prompt = _OVERVIEW_PROMPT.format(files=file_lines, graph_summary=graph_summary)
-    return call_llm(prompt).strip() + "\n"
+def _count_label(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def _prune_stale_pages(repo_path: str, valid_pages: set[str]) -> list[str]:
-    """Delete wiki pages whose source file no longer exists; return removed names."""
-    out_dir = wiki_dir(repo_path)
-    if not out_dir.exists():
-        return []
-    removed: list[str] = []
-    keep = valid_pages | {_OVERVIEW_FILENAME}
-    for page in out_dir.glob("*.md"):
-        if page.name not in keep:
-            page.unlink()
-            removed.append(page.name)
+def _mermaid_id(module: str) -> str:
+    """Return a Mermaid-safe node id for a module path."""
+    return "m_" + (re.sub(r"[^0-9A-Za-z]+", "_", module).strip("_") or "root")
+
+
+def _edge_pairs(linked: dict[str, set[str]]) -> list[tuple[str, str]]:
+    """Return each connection once, as a sorted (a, b) pair list."""
+    seen = {tuple(sorted((source, target))) for source, targets in linked.items() for target in targets}
+    return sorted(seen)
+
+
+def _mermaid_overview(grouped: dict[str, list[str]], linked: dict[str, set[str]]) -> str:
+    """Render the whole module graph as a Mermaid flowchart.
+
+    Obsidian renders ```mermaid blocks natively, so this puts the architecture in
+    the note itself rather than asking the reader to reconstruct it from the
+    global graph view. Edges are undirected (`---`): the dependency graph is
+    symmetrised when it is lifted to module level, so an arrow would imply a
+    direction the data no longer carries.
+    """
+    edges = _edge_pairs(linked)
+    dropped = 0
+    if len(edges) > _MAX_DIAGRAM_EDGES:
+        # Keep the edges that carry the most structure: rank by the summed degree
+        # of their endpoints, so hub connections survive and leaf-to-leaf noise goes.
+        degree = {module: len(targets) for module, targets in linked.items()}
+        edges.sort(key=lambda pair: (-(degree.get(pair[0], 0) + degree.get(pair[1], 0)), pair))
+        dropped = len(edges) - _MAX_DIAGRAM_EDGES
+        edges = sorted(edges[:_MAX_DIAGRAM_EDGES])
+
+    lines = ["```mermaid", "flowchart LR"]
+    for module in sorted(grouped, key=lambda m: (m == _ROOT_MODULE, m)):
+        lines.append(f'    {_mermaid_id(module)}["{module_title(module)}<br/>{_count_label(len(grouped[module]), "file")}"]')
+    for source, target in edges:
+        lines.append(f"    {_mermaid_id(source)} --- {_mermaid_id(target)}")
+    lines.append("```")
+    if dropped:
+        lines.append("")
+        lines.append(f"_{dropped} lower-traffic connection(s) hidden to keep the diagram readable._")
+    return "\n".join(lines)
+
+
+def _mermaid_local(module: str, linked: dict[str, set[str]], grouped: dict[str, list[str]]) -> str:
+    """Render one module and its direct neighbours — the readable 'local graph'.
+
+    A whole-repo picture answers 'how is this organised'; this one answers 'what
+    does this touch', which is the question you actually have while reading a
+    module.
+    """
+    neighbours = sorted(linked.get(module, set()))[:_MAX_LINKS_IN_NOTE]
+    if not neighbours:
+        return ""
+    lines = ["```mermaid", "flowchart LR"]
+    lines.append(f'    {_mermaid_id(module)}["{module_title(module)}"]')
+    for neighbour in neighbours:
+        lines.append(f'    {_mermaid_id(neighbour)}["{module_title(neighbour)}<br/>{_count_label(len(grouped.get(neighbour, [])), "file")}"]')
+    for neighbour in neighbours:
+        lines.append(f"    {_mermaid_id(module)} --- {_mermaid_id(neighbour)}")
+    lines.append(f"    style {_mermaid_id(module)} stroke-width:3px")
+    lines.append("```")
+    return "\n".join(lines)
+
+
+def _frontmatter(fields: dict[str, object], tags: list[str]) -> str:
+    """Render YAML frontmatter.
+
+    Tags are what make the vault usable once generated notes live beside
+    hand-written ones: Obsidian's graph view can colour or filter on them, so
+    `-tag:2brain` shows only your own thinking.
+    """
+    lines = ["---", "tags:"]
+    lines.extend(f"  - {tag}" for tag in tags)
+    lines.extend(f"{key}: {value}" for key, value in fields.items())
+    lines.append("---")
+    return "\n".join(lines)
+
+
+def _wikilinks(modules: list[str], repo_name: str) -> str:
+    """Render module names as Obsidian wikilinks, capped so hubs stay readable."""
+    shown = modules[:_MAX_LINKS_IN_NOTE]
+    rendered = " · ".join(f"[[{page_name_for(m, repo_name)[:-3]}|{module_title(m)}]]" for m in shown)
+    if len(modules) > len(shown):
+        rendered += f" · … and {len(modules) - len(shown)} more"
+    return rendered or "_(none)_"
+
+
+def _render_note(
+    module: str,
+    *,
+    body: str,
+    members: list[str],
+    purposes: dict[str, str],
+    linked: list[str],
+    repo_name: str,
+    updated: str,
+    diagram: str = "",
+) -> str:
+    """Compose a module note from its cached LLM body plus fresh deterministic parts.
+
+    Everything outside `body` is regenerated on every run, so links and file
+    lists stay correct as the codebase moves without spending a single token.
+    """
+    parts = [
+        _frontmatter(
+            {"type": "module", "module": module_title(module), "files": len(members), "updated": updated},
+            ["2brain", "2brain/module", f"project/{repo_name}"],
+        ),
+        "",
+        f"# {module_title(module)}",
+        "",
+        body.strip(),
+        "",
+        "## Connected modules",
+    ]
+    if diagram:
+        parts.extend([diagram, ""])
+    parts.extend([
+        _wikilinks(linked, repo_name),
+        "",
+        "## Files",
+    ])
+    for rel in members:
+        purpose = purposes.get(rel, "")
+        parts.append(f"- `{rel}`" + (f" — {purpose}" if purpose else ""))
+    parts.extend(["", "---", f"[[{index_name_for(repo_name)[:-3]}|← {repo_name} index]]"])
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def _render_index(
+    repo_name: str,
+    *,
+    intro: str,
+    grouped: dict[str, list[str]],
+    linked: dict[str, set[str]],
+    updated: str,
+    diagram: str = "",
+) -> str:
+    """Compose the hub note that every module links back to."""
+    parts = [
+        _frontmatter(
+            {"type": "index", "modules": len(grouped), "updated": updated},
+            ["2brain", "2brain/index", f"project/{repo_name}"],
+        ),
+        "",
+        f"# {repo_name}",
+        "",
+        intro.strip(),
+        "",
+    ]
+    if diagram:
+        parts.extend(["## Module map", diagram, ""])
+    parts.append("## Modules")
+    for module in sorted(grouped, key=lambda m: (m == _ROOT_MODULE, m)):
+        members = grouped[module]
+        degree = len(linked.get(module, set()))
+        parts.append(
+            f"- [[{page_name_for(module, repo_name)[:-3]}|{module_title(module)}]] — "
+            f"{_count_label(len(members), 'file')}, {_count_label(degree, 'connected module')}"
+        )
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def _prune(out_dir: Path, valid: set[str]) -> list[str]:
+    removed = []
+    for note in out_dir.glob("*.md"):
+        if note.name not in valid:
+            note.unlink()
+            removed.append(note.name)
     return removed
-
-
-def _page_is_fresh(repo_path: str, rel_path: str, cached: dict[str, str], content_hash: str) -> bool:
-    """A page is fresh when its cached source hash matches and the page file still exists."""
-    return cached.get("hash") == content_hash and (wiki_dir(repo_path) / page_name_for(rel_path)).exists()
 
 
 def generate(
     repo_path: str,
     *,
-    changed_files: set[str] | None,
+    grouped: dict[str, list[str]],
+    adjacency: dict[str, set[str]],
+    page_texts: dict[str, str],
     force_all: bool = False,
     dry_run: bool = False,
-    scope: Scope | None = None,
 ) -> dict[str, object]:
-    """Generate/update the wiki incrementally and return a summary.
+    """Generate/update the module tier and return a summary.
 
-    changed_files=None means "no usable baseline" → consider every graph file
-    (the hash cache still prevents regenerating unchanged pages).
+    `page_texts` maps repo-relative source paths to their generated per-file wiki
+    page. Module notes are written from those summaries rather than from source,
+    which is what keeps this tier roughly 25 LLM calls instead of 900.
     """
-    repo = Path(repo_path)
-    graph_files, adjacency = load_graph(repo_path)
-    if not graph_files and not adjacency:
-        raise FileNotFoundError(
-            f"graph not found or empty: {repo / _GRAPH_JSON_SUBPATH} — run '2brain graph <repo>' first"
-        )
-    graph_files.update(adjacency)
+    if not grouped:
+        raise ValueError("no modules to document — the wiki produced no documentable files")
 
-    candidates = sorted(f for f in graph_files if _is_documentable(repo, f, scope))
-    if not candidates:
-        if scope is not None and not scope.is_empty:
-            raise ValueError(
-                f"no documentable files left after applying the scope ({scope.describe()}) — "
-                f"widen it in {config.OUT_DIR}/../.2brainignore or re-run with --rescope"
-            )
-        raise ValueError("no documentable files found in the dependency graph")
-
-    if force_all or changed_files is None:
-        targets = set(candidates)
-    else:
-        seeds = changed_files & set(candidates)
-        targets = expand_neighbors(seeds, adjacency) & set(candidates)
-
+    repo_name = repo_display_name(repo_path)
+    linked = module_adjacency(grouped, adjacency)
+    purposes = {rel: file_purpose(text) for rel, text in page_texts.items()}
     cache = _load_cache(repo_path)
-    plan: list[tuple[str, str]] = []  # (rel_path, content_hash)
-    for rel_path in sorted(targets):
-        content_hash = _hash_bytes((repo / rel_path).read_bytes())
-        cached = cache.get(rel_path, {})
-        if not force_all and _page_is_fresh(repo_path, rel_path, cached, content_hash):
-            continue
-        plan.append((rel_path, content_hash))
 
-    valid_pages = {page_name_for(f) for f in candidates}
+    stale = [
+        module
+        for module, members in sorted(grouped.items())
+        if force_all or cache.get(module, {}).get("digest") != _member_digest(members, page_texts)
+    ]
 
     if dry_run:
-        for rel_path, _ in plan:
-            print(f"Wiki     : would regenerate {page_name_for(rel_path)}  ({rel_path})")
-        if not plan:
-            print("Wiki     : nothing to regenerate (all pages fresh)")
+        for module in stale:
+            print(f"Wiki     : would regenerate {page_name_for(module, repo_name)}  ({module_title(module)})")
+        if not stale:
+            print("Wiki     : nothing to regenerate (all module notes fresh)")
         return {
             "artifact": str(_WIKI_SUBPATH),
             "dry_run": True,
-            "planned": [rel for rel, _ in plan],
-            "page_count": len(valid_pages),
-            "candidates": candidates,
-            "adjacency": adjacency,
+            "planned": stale,
+            "module_count": len(grouped),
         }
 
     out_dir = wiki_dir(repo_path)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     written: list[str] = []
-    progress = Progress(len(plan), "Wiki")
-    for rel_path, content_hash in plan:
-        neighbors = adjacency.get(rel_path, set())
-        page = _generate_page(repo, rel_path, neighbors)
-        page_file = out_dir / page_name_for(rel_path)
-        page_file.write_text(page, encoding="utf-8")
-        cache[rel_path] = {"hash": content_hash, "page": page_file.name, "generated_at": now_iso()}
-        # Persist after every page, not once at the end: a run interrupted at page
-        # 300 of 430 must not throw away the 300 it already paid for.
+    progress = Progress(len(stale), "Wiki")
+    for module in stale:
+        members = grouped[module]
+        listed = members[:_MAX_FILES_IN_PROMPT]
+        file_lines = "\n".join(
+            f"- {rel}" + (f" — {purposes.get(rel)}" if purposes.get(rel) else "") for rel in listed
+        )
+        if len(members) > len(listed):
+            file_lines += f"\n- ... and {len(members) - len(listed)} more"
+        link_lines = "\n".join(f"- {module_title(m)}" for m in sorted(linked.get(module, set()))) or "- (none)"
+        body = call_llm(
+            _MODULE_PROMPT.format(module=module_title(module), files=file_lines, links=link_lines)
+        ).strip()
+        cache[module] = {"digest": _member_digest(members, page_texts), "body": body, "updated": now_iso()}
+        # Persist after every body, not once at the end: a run that dies at module
+        # 25 of 30 must not throw away the 25 it already paid for.
         _save_cache(repo_path, cache)
-        written.append(page_file.name)
-        progress.step(rel_path)
+        written.append(page_name_for(module, repo_name))
+        progress.step(f"{module_title(module)}  ({_count_label(len(members), 'file')})")
 
-    for stale in set(cache) - set(candidates):
-        cache.pop(stale, None)
-    removed = _prune_stale_pages(repo_path, valid_pages)
+    # Re-render every note, not just the regenerated ones: links and file lists are
+    # deterministic, so keeping them current across the whole tier is free.
+    for module, members in grouped.items():
+        note = _render_note(
+            module,
+            body=cache.get(module, {}).get("body", ""),
+            members=members,
+            purposes=purposes,
+            linked=sorted(linked.get(module, set())),
+            repo_name=repo_name,
+            updated=cache.get(module, {}).get("updated", ""),
+            diagram=_mermaid_local(module, linked, grouped),
+        )
+        (out_dir / page_name_for(module, repo_name)).write_text(note, encoding="utf-8")
+
+    index_path = out_dir / index_name_for(repo_name)
+    intro = cache.get("__index__", {}).get("body", "")
+    index_digest = _member_digest(sorted(grouped), {m: "" for m in grouped})
+    if force_all or not intro or cache.get("__index__", {}).get("digest") != index_digest:
+        intro = call_llm(
+            _INDEX_PROMPT.format(
+                repo=repo_name,
+                modules="\n".join(f"- {module_title(m)} ({len(v)} files)" for m, v in sorted(grouped.items())),
+            )
+        ).strip()
+        cache["__index__"] = {"digest": index_digest, "body": intro, "updated": now_iso()}
+        written.append(index_name_for(repo_name))
+        print(f"Wiki     : wrote {index_name_for(repo_name)}")
+    index_path.write_text(
+        _render_index(
+            repo_name,
+            intro=intro,
+            grouped=grouped,
+            linked=linked,
+            updated=cache.get("__index__", {}).get("updated", ""),
+            diagram=_mermaid_overview(grouped, linked),
+        ),
+        encoding="utf-8",
+    )
+
+    valid = {page_name_for(m, repo_name) for m in grouped} | {index_name_for(repo_name)}
+    removed = _prune(out_dir, valid)
     for name in removed:
         print(f"Wiki     : pruned {name}")
-
-    overview_path = out_dir / _OVERVIEW_FILENAME
-    if written or removed or not overview_path.exists():
-        overview_path.write_text(_generate_overview(candidates, adjacency), encoding="utf-8")
-        print(f"Wiki     : wrote {_OVERVIEW_FILENAME}")
-
+    for key in set(cache) - set(grouped) - {"__index__"}:
+        cache.pop(key, None)
     _save_cache(repo_path, cache)
-    if not written and not removed:
-        print("Wiki     : nothing to regenerate (all pages fresh)")
 
     return {
         "artifact": str(_WIKI_SUBPATH),
         "dry_run": False,
         "written": written,
         "removed": removed,
-        "page_count": len(list(out_dir.glob("*.md"))) - (1 if overview_path.exists() else 0),
-        # Handed to the module tier so it can group the documented set and lift
-        # the file-level dependency graph to module level.
-        "candidates": candidates,
-        "adjacency": adjacency,
+        "module_count": len(grouped),
+        "page_count": len(valid),
     }
 
 
-def read_pages(repo_path: str, candidates: list[str]) -> dict[str, str]:
-    """Read the generated page for each candidate file, keyed by source path.
-
-    The module tier summarises these instead of re-reading source, which is what
-    keeps it ~25 LLM calls rather than one per file.
-    """
-    out_dir = wiki_dir(repo_path)
-    pages: dict[str, str] = {}
-    for rel_path in candidates:
-        page = out_dir / page_name_for(rel_path)
-        if page.is_file():
-            pages[rel_path] = page.read_text(encoding="utf-8", errors="replace")
-    return pages
-
-
-def prune_legacy_vault_mirror(repo_path: str, vault_path: Path) -> list[str]:
-    """Remove the flat per-file page mirror written by earlier 2brain versions.
-
-    Until the module tier existed, every per-file page was copied into
-    Projects/<repo>/Generated/ — hundreds of machine-oriented notes sitting in a
-    human vault, which is exactly what the module tier replaced. Nothing writes
-    there any more, so anything still present is legacy output to clear out.
-    Files under Generated/Modules/ and Generated/Architecture/ are untouched.
-    """
-    generated = vault_path / "Projects" / repo_display_name(repo_path) / "Generated"
-    if not generated.is_dir():
-        return []
-    removed = []
-    for page in generated.glob("*.md"):
-        page.unlink()
-        removed.append(page.name)
-    return sorted(removed)
+def mirror_to_vault(repo_path: str, vault_path: Path) -> Path:
+    """Mirror the module tier into the vault under Projects/<repo>/Generated/Modules/."""
+    source = wiki_dir(repo_path)
+    if not source.exists() or not any(source.glob("*.md")):
+        raise FileNotFoundError(f"module tier not generated yet: {source}")
+    project_root = vault_path / "Projects" / repo_display_name(repo_path)
+    (project_root / "Notes").mkdir(parents=True, exist_ok=True)
+    return mirror_markdown_tree(source, project_root / "Generated" / "Modules")

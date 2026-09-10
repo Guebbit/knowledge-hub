@@ -35,7 +35,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-# scripts/ is the import root — `from repo import modules` mirrors how the
+# scripts/ is the import root — `from repo import wiki` mirrors how the
 # container runs them (python /scripts/repo.py), so tests and production agree.
 pythonpath = ["scripts"]
 testpaths = ["tests"]

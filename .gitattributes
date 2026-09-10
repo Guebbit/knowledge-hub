@@ -7,3 +7,7 @@
 # or 'diff=off' — that would suppress the textual diff locally too, and local
 # `git diff` is exactly where you want to see what a regen actually changed.
 vault/Projects/*/Generated/** linguist-generated=true
+
+# 2brain:start — regenerate with: 2brain <repo-path>
+.2brain/** linguist-generated=true
+# 2brain:end

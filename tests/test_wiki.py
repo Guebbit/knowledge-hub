@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from repo import modules
+from repo import wiki as modules
 
 
 def _files(spec: dict[str, int]) -> list[str]:
@@ -112,9 +112,9 @@ class TestNaming:
         assert modules.page_name_for("src/ui", "alpha") != modules.page_name_for("src/ui", "beta")
 
     def test_never_collides_with_a_per_file_wiki_page(self):
-        from repo import wiki
+        from repo import llm_wiki
 
-        assert modules.page_name_for("src/auth", "r") != f"r_{wiki.page_name_for('src/auth.ts')}"
+        assert modules.page_name_for("src/auth", "r") != f"r_{llm_wiki.page_name_for('src/auth.ts')}"
 
     def test_root_module_has_a_stable_name(self):
         assert modules.page_name_for("", "r") == "r_ROOT.md"

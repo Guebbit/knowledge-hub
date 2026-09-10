@@ -1,7 +1,7 @@
 """
 Architecture layer for 2brain — topic/component-level docs + Mermaid diagrams.
 
-This is the tier *above* the per-file living wiki (repo/wiki.py): instead of one
+This is the tier *above* the per-file living wiki (repo/llm_wiki.py): instead of one
 page per source file, it produces narrative "how X works" component pages and
 architecture diagrams, answering questions the file-by-file wiki cannot ("what
 are the main subsystems and how do they interact?").
@@ -28,7 +28,7 @@ DESIGN (mirrors the wiki layer)
   into the semantic index and they surface via `2brain query` + REPO_CONTEXT.md.
 - CodeBoarding keeps its own working/baseline dir at `<repo>/.codeboarding/`
   (analysis.json + fingerprint.json), which is what makes its incremental mode
-  cheap — analogous to the wiki's .wiki-cache.json. That dir is marked generated
+  cheap — analogous to the per-file llm-wiki's .llm-wiki-cache.json. That dir is marked generated
   in shared/config.py so staleness checks and the wiki ignore it.
 - The staleness baseline is intentionally NOT rewritten here (only graphify moves
   it), same rule as the wiki.

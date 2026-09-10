@@ -28,10 +28,10 @@ A bare `2brain <repo>` runs all three layers in order. Its graph step is
 incremental whenever graphify output already exists, so re-running is cheap;
 --force-all rebuilds every layer from scratch.
 
-The wiki step also builds the module tier (repo/modules.py): one note per
+The wiki step also builds the module tier (repo/wiki.py): one note per
 meaningful directory, written from the per-file pages. That tier and the arch
 pages are mirrored into vault/Projects/<repo-name>/Generated/ whenever a vault is
-found at VAULT_PATH; per-file wiki pages are machine-tier and stay in the repo.
+found at VAULT_PATH; per-file llm-wiki pages are machine-tier and stay in the repo.
 Set REPO_MIRROR_VAULT=0 in .env, or pass --no-mirror-vault, to turn mirroring off.
 
 Which files get documented is a per-repo scope kept in <repo>/.2brainignore —
@@ -53,8 +53,8 @@ from pathlib import Path
 from repo import arch as repo_arch
 from repo import index as repo_index
 from repo import injection as repo_injection
+from repo import llm_wiki as repo_llm_wiki
 from repo import memory as repo_memory
-from repo import modules as repo_modules
 from repo import scope as repo_scope
 from repo import wiki as repo_wiki
 from repo.execution import generate as execution_generate
@@ -689,25 +689,25 @@ def _wiki(
     """
     if target_files:
         changed = _normalize_target_files(repo_path, target_files)
-        print(f"Wiki     : targeting {len(changed)} explicit file(s) + graph neighbors")
+        print(f"LLM Wiki : targeting {len(changed)} explicit file(s) + graph neighbors")
     elif force_all:
         changed = None
     elif baseline_head is not _UNPINNED:
         pinned = str(baseline_head or "")
         changed = _changed_files_since_commit(repo_path, pinned) if pinned else None
         if changed is None:
-            print("Wiki     : no usable baseline — considering all graph files (hash cache still applies)")
+            print("LLM Wiki : no usable baseline — considering all graph files (hash cache still applies)")
     else:
         changed = _baseline_changed_files(repo_path)
         if changed is None:
-            print("Wiki     : no usable baseline — considering all graph files (hash cache still applies)")
+            print("LLM Wiki : no usable baseline — considering all graph files (hash cache still applies)")
 
     # providers.call_llm reads config.PROVIDER/config.MODEL at call time.
     config.PROVIDER = provider
     config.MODEL = model
 
     try:
-        summary = repo_wiki.generate(
+        summary = repo_llm_wiki.generate(
             repo_path,
             changed_files=changed,
             force_all=force_all,
@@ -724,13 +724,13 @@ def _wiki(
     adjacency = summary.get("adjacency") or {}
     module_summary: dict[str, object] = {}
     if candidates:
-        grouped = repo_modules.select_modules(candidates)
+        grouped = repo_wiki.select_modules(candidates)
         try:
-            module_summary = repo_modules.generate(
+            module_summary = repo_wiki.generate(
                 repo_path,
                 grouped=grouped,
                 adjacency=adjacency,
-                page_texts=repo_wiki.read_pages(repo_path, candidates),
+                page_texts=repo_llm_wiki.read_pages(repo_path, candidates),
                 force_all=force_all,
                 dry_run=dry_run,
             )
@@ -749,26 +749,26 @@ def _wiki(
         # Per-file pages are machine-tier and deliberately stay out of the vault;
         # only the module tier is mirrored. Clear the flat mirror older versions
         # left behind so the vault converges on the readable layout.
-        legacy = repo_wiki.prune_legacy_vault_mirror(repo_path, config.VAULT_PATH)
+        legacy = repo_llm_wiki.prune_legacy_vault_mirror(repo_path, config.VAULT_PATH)
         if legacy:
-            print(f"Wiki     : cleared {len(legacy)} legacy per-file page(s) from the vault mirror")
-        _mirror_to_vault(repo_modules.mirror_to_vault, repo_path, label="Modules", explicit=mirror_explicit)
+            print(f"LLM Wiki : cleared {len(legacy)} legacy per-file page(s) from the vault mirror")
+        _mirror_to_vault(repo_wiki.mirror_to_vault, repo_path, label="Wiki", explicit=mirror_explicit)
 
     written = summary.get("written") or []
     removed = summary.get("removed") or []
-    print(f"Wiki     : done ({len(written)} written, {len(removed)} pruned, {summary.get('page_count')} pages total)")
+    print(f"LLM Wiki : done ({len(written)} written, {len(removed)} pruned, {summary.get('page_count')} pages total)")
     _record("Scope", scope.describe())
-    _record("Wiki", f"{len(written)} written · {len(removed)} pruned · {summary.get('page_count')} pages")
+    _record("LLM Wiki", f"{len(written)} written · {len(removed)} pruned · {summary.get('page_count')} pages")
     if module_summary:
         module_written = module_summary.get("written") or []
         module_removed = module_summary.get("removed") or []
         print(
-            f"Modules  : done ({len(module_written)} written, "
+            f"Wiki     : done ({len(module_written)} written, "
             f"{len(module_removed)} pruned, "
             f"{module_summary.get('module_count')} modules)"
         )
         _record(
-            "Modules",
+            "Wiki",
             f"{len(module_written)} written · {len(module_removed)} pruned · "
             f"{module_summary.get('module_count')} modules",
         )

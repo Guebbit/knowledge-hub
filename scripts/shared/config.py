@@ -130,5 +130,8 @@ GENERATED_FILES = (
 # the one directory it writes to (GRAPHIFY_OUT, by basename), so everything
 # generated outside it — our Markdown, CodeBoarding's working dir — would be
 # extracted back into the graph, feeding generated prose into the next
-# generation of it. injection.py writes these into the target's .graphifyignore.
+# generation of it. injection.py writes whichever of these git does not already
+# exclude into the target's .graphifyignore, and writes no file when git covers
+# them all (.codeboarding/ is in our own managed .gitignore block, so in
+# practice only OUT_DIR reaches .graphifyignore, and only where it is committed).
 GRAPHIFY_IGNORE_DIRS = (OUT_DIR, ".codeboarding")

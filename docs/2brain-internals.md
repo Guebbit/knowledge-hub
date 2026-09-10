@@ -58,20 +58,20 @@ Writes one editor-specific file that references `REPO_CONTEXT.md`:
 - **Cursor** → `.cursor/rules/2brain.mdc` (a global always-apply rule)
 - **Neutral** → nothing (for local/custom setups)
 
-Regardless of target, this layer also writes three managed blocks that the
+Regardless of target, this layer also writes the managed blocks that the
 generated tree depends on:
-- **`.graphifyignore`** → lists `.2brain/` and `.codeboarding/`. graphify self-prunes only the single directory it writes to, so without this it re-ingests our own wiki, arch pages and `EXECUTION.md` as source on the next extraction — generated prose feeding the next generation of it.
+- **`.graphifyignore`** → written **only when necessary**, and only listing what is necessary. graphify self-prunes just the single directory it writes to, so without an exclusion it re-ingests our own wiki, arch pages and `EXECUTION.md` as source on the next extraction — generated prose feeding the next generation of it. But graphify honors `.gitignore` too, so each candidate (`.2brain/`, `.codeboarding/`) is first put to `git check-ignore --no-index`; already-excluded ones are dropped, and when nothing survives the file is not created (an obsolete managed block from an earlier run is stripped, and the file removed if that leaves it empty). `.codeboarding/` is in our own managed `.gitignore` block, so in practice only `.2brain/` reaches the file. The block opens with a comment explaining what `.graphifyignore` is, since a target repo has no other record of where the file came from.
 - **`.gitattributes`** → marks `.2brain/**` as `linguist-generated` so the committed artifacts collapse in reviews. Deliberately not `-diff`, which would suppress the textual diff locally too.
-- **`.gitignore`** → excludes only the regeneration-only slice of `.2brain/`: graphify's raw `graph.json`/`manifest.json`/`.graphify_*` dumps (structural data, not prose — see §4's chunk selection), graphify's own AST/semantic cache, graphify's dated snapshot directories (which duplicate its live output), the wiki/module incremental content-hash caches, and `.codeboarding/` (its canonical output is already mirrored into `.2brain/arch/`). Everything else — `wiki/`, `arch/`, `modules/`, `EXECUTION.md`, `REPO_MEMORY.md`, `REPO_CONTEXT.md`, `repo-index.json` — is committed on purpose, so a teammate without 2brain/graphify installed (or without hardware to regenerate) can still read and query it.
+- **`.gitignore`** → excludes only the regeneration-only slice of `.2brain/`: graphify's raw `graph.json`/`manifest.json`/`.graphify_*` dumps (structural data, not prose — see §4's chunk selection), graphify's own AST/semantic cache, graphify's dated snapshot directories (which duplicate its live output), the wiki/module incremental content-hash caches, and `.codeboarding/` (its canonical output is already mirrored into `.2brain/arch/`). Everything else — `llm-wiki/`, `wiki/`, `arch/`, `EXECUTION.md`, `REPO_MEMORY.md`, `REPO_CONTEXT.md`, `repo-index.json` — is committed on purpose, so a teammate without 2brain/graphify installed (or without hardware to regenerate) can still read and query it.
 
 Injected blocks are wrapped in `<!-- 2brain:start --> … <!-- 2brain:end -->` markers and rewritten **only if the content changed** — so your own edits around them survive, and re-running is idempotent.
 
-### Layer 7 — Living wiki (optional, `.2brain/wiki/`)
+### Layer 7 — Living wiki (optional, `.2brain/llm-wiki/`)
 One LLM-written Markdown page per source file, plus `OVERVIEW.md`. This is the only layer that's *incremental by design* (§3), because it's the expensive one — every page is an LLM call. Generated pages are folded back into the index (layer 4) so `query` can retrieve them.
 
 **Audience: machines.** One page per file is the right granularity for retrieval and the wrong one for a human — see §8. These pages stay in the repo and are never mirrored into the vault.
 
-### Layer 7c — Module tier (`.2brain/modules/`)
+### Layer 7c — Module tier (`.2brain/wiki/`)
 One note per meaningful directory, written from the per-file pages rather than from source, plus a hub note. Filenames are namespaced by repository (`<repo>_src_ui.md`, `<repo>_INDEX.md`). This is the human-facing tier and the only wiki-side output mirrored into the Obsidian vault. Modules are chosen top-down over the directory tree (subtree ≤ 40 documented files becomes a module; bigger trees split into children; the result merges upward until it fits 30 modules), and their edges are the file-level dependency graph lifted to module level. Rationale and the prior art it follows: §8.
 
 ### Layer 7b — Architecture layer (optional, `.2brain/arch/`)
@@ -158,7 +158,7 @@ flowchart LR
 
 So a 1-file change can legitimately regenerate a handful of related pages, but not the whole repo.
 
-**Step 3 — Content-hash cache (the cost floor).** Even after expansion, each candidate page is only regenerated if its source file's SHA-256 hash differs from `.wiki-cache.json` (or the page file is missing). **Unchanged source ⇒ cache hit ⇒ zero tokens spent.** `--force-all` bypasses the cache.
+**Step 3 — Content-hash cache (the cost floor).** Even after expansion, each candidate page is only regenerated if its source file's SHA-256 hash differs from `.llm-wiki-cache.json` (or the page file is missing). **Unchanged source ⇒ cache hit ⇒ zero tokens spent.** `--force-all` bypasses the cache.
 
 **Step 4 — Pruning & overview.** Pages whose source file disappeared are deleted, and stale cache entries dropped. `OVERVIEW.md` is regenerated only if something was written, removed, or it's missing.
 
@@ -194,7 +194,7 @@ Unlike the wiki, the arch layer never consults git: it does not diff against the
 ### 3d. `modules` — cached bodies, always-fresh wiring
 The module tier splits every note into two halves with different lifetimes:
 
-- **The LLM body** (Purpose / Key parts / How it connects / Where to start) is cached in `.modules-cache.json` under a SHA-256 over the module's member paths *and* the text of their per-file pages. Change a file → its wiki page changes → that module's digest changes → exactly that one module is rewritten. Nothing else in the tier costs a token.
+- **The LLM body** (Purpose / Key parts / How it connects / Where to start) is cached in `.wiki-cache.json` under a SHA-256 over the module's member paths *and* the text of their per-file pages. Change a file → its wiki page changes → that module's digest changes → exactly that one module is rewritten. Nothing else in the tier costs a token.
 - **The deterministic wrapper** (YAML frontmatter, `## Connected modules` wikilinks, the `## Files` list) is re-rendered for *every* module on *every* run, from the current graph. That is free, and it means links and file lists never drift from the codebase even when no body was regenerated.
 
 That split is also the upgrade path: an existing tier picks up changes to the wrapper format on the next ordinary run, without regenerating a single body.
@@ -243,7 +243,7 @@ After the index is built, `sync_entries` stamps every memory entry with the curr
 
 Putting it together — this is the "what combines with what" map:
 
-| Command | Graph | Execution | Memory | Index | Context | Injection | Wiki | Modules | Arch | Writes state |
+| Command | Graph | Execution | Memory | Index | Context | Injection | LLM Wiki | Wiki | Arch | Writes state |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | `all` (bare `2brain <repo>`) | ● | ● | ● | ●×3 | ●×3 | ●×3 | ● | ● | ● | ● |
 | `graph` / `graph --update` | ● | ● | ● | ● | ● | ● | — | — | — | ● |
@@ -281,8 +281,8 @@ Reading the table:
 | Memory | `.2brain/repo-memory.json` | `2brain remember` only | milliseconds, no LLM |
 | Index | `.2brain/repo-index.json` | rebuilt in full every time; its **revision** changes when artifacts, memory, or runtime metadata change | seconds, no LLM (TF-IDF is local) |
 | Context / Injection | `REPO_CONTEXT.md` + managed blocks in `CLAUDE.md` etc. | rebuilt every time; blocks are only rewritten if the bytes differ | milliseconds, no LLM |
-| Wiki | `.2brain/wiki/.wiki-cache.json` (SHA-256 per source file) | source-file content hash, or a missing page file | zero LLM calls — every page is a cache hit |
-| Modules | `.2brain/modules/.modules-cache.json` (SHA-256 per module over its member pages) | a member page changed, or the module's file set moved | zero LLM calls; the deterministic wrapper is still re-rendered (free) |
+| LLM Wiki | `.2brain/llm-wiki/.llm-wiki-cache.json` (SHA-256 per source file) | source-file content hash, or a missing page file | zero LLM calls — every page is a cache hit |
+| Wiki | `.2brain/wiki/.wiki-cache.json` (SHA-256 per module over its member pages) | a member page changed, or the module's file set moved | zero LLM calls; the deterministic wrapper is still re-rendered (free) |
 | Arch | `.codeboarding/analysis.json` + `fingerprint.json` | CodeBoarding's fingerprint | one incremental CodeBoarding run (still an LLM pass, but scoped) |
 
 The dividing line: **everything except the graph, wiki, and arch layers is recomputed unconditionally**, because those layers are deterministic and free. Only the three LLM-backed layers are cached.
@@ -300,7 +300,7 @@ Its content hash changes → its wiki page regenerates, plus its 2-hop dependenc
 **You delete or rename a file.**
 Once the graph refreshes, the file leaves `candidates`; `_prune_stale_pages` deletes its wiki page and its `.wiki-cache.json` entry is dropped. A rename is seen as a delete + create, so the old page is pruned and a new one generated. Same caveat as above: run the graph layer (or a bare `2brain <repo>`), not `2brain wiki` alone, or the stale page survives.
 
-If the deleted file was the last member of a module, that module disappears too: `modules.py::generate` recomputes `grouped` from the current candidate set, `_prune` deletes the now-orphaned note from `.2brain/modules/`, and its `.modules-cache.json` entry is dropped. The vault follows automatically — `mirror_to_vault` calls `vault.mirror_markdown_tree`, which treats the vault's `Generated/Modules/` folder as an exact reflection of `.2brain/modules/`: it copies every current note over and `unlink()`s any destination note whose source is gone. So a module deleted (or emptied by scope) vanishes from the vault on the same run, not just from the repo-local tier. Arch pages behave the same way through `mirror_to_vault` in `arch.py` → `Generated/Architecture/`.
+If the deleted file was the last member of a module, that module disappears too: `wiki.py::generate` recomputes `grouped` from the current candidate set, `_prune` deletes the now-orphaned note from `.2brain/wiki/`, and its `.wiki-cache.json` entry is dropped. The vault follows automatically — `mirror_to_vault` calls `vault.mirror_markdown_tree`, which treats the vault's `Generated/Modules/` folder as an exact reflection of `.2brain/wiki/`: it copies every current note over and `unlink()`s any destination note whose source is gone. So a module deleted (or emptied by scope) vanishes from the vault on the same run, not just from the repo-local tier. Arch pages behave the same way through `mirror_to_vault` in `arch.py` → `Generated/Architecture/`.
 
 **Nothing changed since the last run.**
 `2brain <repo>` is close to free on the LLM budget: `graphify update` finds no dirty files, every wiki page is a cache hit ("nothing to regenerate — all pages fresh"), and only the deterministic layers rewrite themselves. The arch layer is the exception — it still performs an incremental CodeBoarding run, which is real work. Use `2brain graph <repo> --update` or `2brain wiki <repo>` if you specifically want to avoid that.
@@ -332,7 +332,7 @@ A `2brain <repo>` that dies partway leaves everything the completed layers wrote
 
 Two things are worth spelling out:
 
-- **The wiki resumes page-by-page — this is 2brain's pause mechanism.** `.wiki-cache.json` is written after every page (not once at the end), and `_page_is_fresh` also requires the page file to exist. So killing a wiki run at page 300 of 430 — a deliberate Ctrl+C to pause it, or a crash — re-uses those 300 for free on the next `2brain wiki <repo>`; only the unwritten remainder costs tokens.
+- **The wiki resumes page-by-page — this is 2brain's pause mechanism.** `.llm-wiki-cache.json` is written after every page (not once at the end), and `_page_is_fresh` also requires the page file to exist. So killing a wiki run at page 300 of 430 — a deliberate Ctrl+C to pause it, or a crash — re-uses those 300 for free on the next `2brain wiki <repo>`; only the unwritten remainder costs tokens.
 - **The arch layer does not resume at all** (§3c). CodeBoarding writes `analysis.json` only on success, so a crashed *or paused* arch run leaves no baseline and the next attempt is another full analysis. This is the one place where interrupting a run costs you the whole layer — let an arch run finish, or accept redoing it.
 
 Because the state baseline is written by the graph layer and never by wiki or arch, a run that dies in the arch layer still records the graph baseline at the new HEAD. The retry therefore sees "nothing changed" for the wiki — which is correct, since the wiki already completed.
@@ -347,7 +347,7 @@ Because the state baseline is written by the graph layer and never by wiki or ar
 | Re-document specific files (+ their neighbors) | `2brain wiki <repo> src/a.ts src/b.ts` |
 | Preview cost without spending tokens | `2brain wiki <repo> --dry-run` / `2brain arch <repo> --dry-run` |
 | Rebuild index/context/injection from existing artifacts | `2brain reindex <repo>` |
-| Hard reset of one layer | delete `.2brain/wiki/` / `.codeboarding/` / `.2brain/graphify-out/` and re-run |
+| Hard reset of one layer | delete `.2brain/llm-wiki/` (or `.2brain/wiki/` for the module tier) / `.codeboarding/` / `.2brain/graphify-out/` and re-run |
 
 Deleting `.2brain/` entirely resets everything, including the staleness baseline — the next run is a first run.
 
@@ -361,7 +361,7 @@ plainly because it drove the design of the module tier (layer 7c).
 
 ### The two audiences
 
-| | Per-file wiki (`.2brain/wiki/`) | Module tier (`.2brain/modules/`) |
+| | Per-file wiki (`.2brain/llm-wiki/`) | Module tier (`.2brain/wiki/`) |
 |---|---|---|
 | Read by | the semantic index, `2brain query`, `REPO_CONTEXT.md` | a human, in Obsidian |
 | Unit | one source file | one meaningful directory |
@@ -400,7 +400,7 @@ The module tier is the MOC layer, sized the way the AI-wiki tools size theirs.
 
 ### What follows from it
 
-- **Only the module tier and the arch layer reach the vault.** `wiki.py` has no
+- **Only the module tier and the arch layer reach the vault.** `llm_wiki.py` has no
   `mirror_to_vault` at all; `prune_legacy_vault_mirror` clears the flat per-file
   mirror that earlier versions wrote, so an existing vault converges on the new
   layout on the next ordinary run.

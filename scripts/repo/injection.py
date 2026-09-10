@@ -5,14 +5,17 @@ This module writes/updates small "bridge" files (Claude, Copilot, Cursor) that
 point to <OUT_DIR>/REPO_CONTEXT.md so assistants can ground responses in the
 latest generated repository artifacts.
 
-It also writes the two repo-hygiene files that make the generated tree behave:
-.graphifyignore (so graphify never re-ingests our own Markdown as source) and
-.gitattributes (so the committed artifacts read as generated in diffs).
+It also writes the repo-hygiene files that make the generated tree behave:
+.gitattributes (so the committed artifacts read as generated in diffs), .gitignore
+(so regeneration-only caches stay out of history) and — only when git's own ignore
+rules do not already cover the generated directories — .graphifyignore, so graphify
+never re-ingests our own Markdown as source.
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -130,8 +133,28 @@ def _replace_or_append(
     return True
 
 
-def _graphifyignore_block() -> str:
-    """Managed .graphifyignore block keeping generated docs out of the graph.
+def _git_ignores(repo: Path, relative_path: str) -> bool:
+    """True when git's exclude rules already cover `relative_path`.
+
+    `--no-index` asks purely about the ignore rules, ignoring whether the path
+    happens to be tracked — which is the same question graphify asks when it
+    reads .gitignore. Anything git cannot answer (no git, no repository) counts
+    as "not ignored", so the exclusion is written explicitly rather than assumed.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "--quiet", "--no-index", "--", relative_path],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def _graphifyignore_dirs(repo: Path) -> tuple[str, ...]:
+    """The generated dirs that actually need a .graphifyignore entry, if any.
 
     graphify prunes exactly one directory on its own: the one it writes to,
     matched by basename(GRAPHIFY_OUT). Everything generated outside it —
@@ -139,11 +162,35 @@ def _graphifyignore_block() -> str:
     ordinary Markdown as far as graphify is concerned, and would be extracted
     back into the graph on the next run, feeding generated prose into the next
     generation of generated prose.
+
+    But graphify's scan honours .gitignore too, so a directory git already
+    excludes needs no second listing: .codeboarding/ sits in our own managed
+    .gitignore block, and a repo that chooses not to commit OUT_DIR gitignores
+    that as well. Whatever survives this filter is the only reason
+    .graphifyignore exists — when nothing survives, the file is not written.
+    """
+    return tuple(
+        name for name in config.GRAPHIFY_IGNORE_DIRS if not _git_ignores(repo, f"{name}/")
+    )
+
+
+def _graphifyignore_block(dirs: tuple[str, ...]) -> str:
+    """Managed .graphifyignore block keeping generated docs out of the graph.
+
+    The header explains the file to whoever opens it next: .graphifyignore is
+    graphify's own, and a target repo has no other record of where it came from
+    or why deleting it would quietly poison the next graph.
     """
     lines = [
         _HASH_MARKER_START,
-        "# Generated documentation must never be re-ingested as source.",
-        *(f"{name}/" for name in config.GRAPHIFY_IGNORE_DIRS),
+        "# .graphifyignore — graphify's scan-exclusion list: gitignore syntax, one",
+        "# pattern per line, read alongside .gitignore to decide which files get",
+        "# extracted into the code graph.",
+        "#",
+        "# The directories below hold 2brain's own generated documentation. They are",
+        "# not gitignored (they are committed on purpose), so without this file",
+        "# graphify would extract generated prose back into the next graph.",
+        *(f"{name}/" for name in dirs),
         _HASH_MARKER_END,
     ]
     return "\n".join(lines)
@@ -168,7 +215,7 @@ def _gitattributes_block() -> str:
 def _gitignore_block() -> str:
     """Managed .gitignore block excluding regeneration-only caches and duplicates.
 
-    Deliberately narrow: wiki/, arch/, modules/, EXECUTION.md, REPO_MEMORY.md,
+    Deliberately narrow: llm-wiki/, wiki/, arch/, EXECUTION.md, REPO_MEMORY.md,
     REPO_CONTEXT.md and repo-index.json are committed on purpose (regenerating
     them costs real LLM time/tokens, or needs 2brain/graphify installed — a
     teammate without that tooling or a capable machine should still be able to
@@ -192,18 +239,34 @@ def _gitignore_block() -> str:
         f"{graphify_out}/.graphify_analysis.json",
         f"{graphify_out}/.graphify_labels.json*",
         f"{graphify_out}/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/",
+        f"{_OUT}/llm-wiki/.llm-wiki-cache.json",
         f"{_OUT}/wiki/.wiki-cache.json",
-        f"{_OUT}/modules/.modules-cache.json",
         ".codeboarding/",
         _HASH_MARKER_END,
     ])
 
 
+def _remove_managed_block(path: Path) -> bool:
+    """Drop our managed block from `path`; delete the file if nothing else remains."""
+    if not path.exists():
+        return False
+    content = path.read_text(encoding="utf-8")
+    if _HASH_MARKER_START not in content:
+        return False
+    remainder = _HASH_MARKER_PATTERN.sub("", content).strip()
+    if remainder:
+        path.write_text(remainder + "\n", encoding="utf-8")
+    else:
+        path.unlink()
+    return True
+
+
 def _write_repo_hygiene(repo: Path) -> list[str]:
     """Write the ignore/attribute files the generated tree needs, in any AI target."""
     outputs: list[str] = []
+    # .gitignore goes first: _graphifyignore_dirs() asks git what it already
+    # excludes, and the answer must include the block we are writing this run.
     for filename, block in (
-        (".graphifyignore", _graphifyignore_block()),
         (".gitattributes", _gitattributes_block()),
         (".gitignore", _gitignore_block()),
     ):
@@ -215,6 +278,21 @@ def _write_repo_hygiene(repo: Path) -> list[str]:
             pattern=_HASH_MARKER_PATTERN,
         ):
             outputs.append(str(path))
+
+    graphifyignore = repo / ".graphifyignore"
+    dirs = _graphifyignore_dirs(repo)
+    if dirs:
+        if _replace_or_append(
+            graphifyignore,
+            block=_graphifyignore_block(dirs),
+            marker_start=_HASH_MARKER_START,
+            pattern=_HASH_MARKER_PATTERN,
+        ):
+            outputs.append(str(graphifyignore))
+    # Nothing left to exclude: a file we wrote on an earlier run is now noise,
+    # and leaving a stale block behind would outlive the reason for it.
+    elif _remove_managed_block(graphifyignore):
+        outputs.append(str(graphifyignore))
     return outputs
 
 
@@ -281,11 +359,18 @@ def write_repo_context(
     lines.append("## Core Artifacts")
     for artifact_path, description in _CONTEXT_ARTIFACTS:
         lines.append(f"- `{artifact_path}` — {description}")
+    llm_wiki_dir = repo / _OUT / "llm-wiki"
+    if llm_wiki_dir.is_dir() and any(llm_wiki_dir.glob("*.md")):
+        lines.append(
+            f"- `{_OUT}/llm-wiki/` — per-file LLM wiki: one machine-oriented page per "
+            "source file plus `OVERVIEW.md` (generated — do not edit by hand; regenerate with `2brain wiki <repo-path>`)"
+        )
     wiki_dir = repo / _OUT / "wiki"
     if wiki_dir.is_dir() and any(wiki_dir.glob("*.md")):
         lines.append(
-            f"- `{_OUT}/wiki/` — living wiki: per-file documentation pages "
-            "plus `OVERVIEW.md` (generated — do not edit by hand; regenerate with `2brain wiki <repo-path>`)"
+            f"- `{_OUT}/wiki/` — living wiki: one note per meaningful directory plus "
+            "an `INDEX.md` hub, mirrored into the Obsidian vault (generated — do not edit by hand; "
+            "regenerate with `2brain wiki <repo-path>`)"
         )
     arch_dir = repo / _OUT / "arch"
     if arch_dir.is_dir() and any(arch_dir.glob("*.md")):
