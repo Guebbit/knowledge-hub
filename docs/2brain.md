@@ -472,6 +472,9 @@ Generated outputs by selection:
 
 Shared variables (`LINUX_USERNAME`, `DEFAULT_PRESET`, `PRESET_*`, API keys, Ollama tuning) are documented in **[docs/2brain-quick.md](2brain-quick.md#configuration-reference)**.
 
+For a single-page comparison of every provider type (API vs CLI, credentials, and
+which commands each works with), see **[docs/presets.md](presets.md)**.
+
 ---
 
 See the main [README](../README.md) for installation, the shared model cache, and troubleshooting.
