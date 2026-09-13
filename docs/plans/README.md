@@ -16,15 +16,17 @@ read", not in generating more.
 | # | Item | Doc | Status |
 |---|---|---|---|
 | 1 | llm-wiki pages mirror the source tree | [llm-wiki-page-paths.md](llm-wiki-page-paths.md) | **done** |
-| 2 | REPO_CONTEXT.md becomes a router | [repo-context-router.md](repo-context-router.md) | planned |
-| 3 | Stamp artifact freshness into the injected block | [artifact-staleness.md](artifact-staleness.md) | after re-run |
-| 4 | Stop double-indexing the two wiki tiers | [index-tier-duplication.md](index-tier-duplication.md) | planned |
-| 5 | Host mode + teach EXECUTION.md about compose | [host-container-mode.md](host-container-mode.md) | planned |
-| 6 | Gate and conditionally advertise GRAPH_REPORT.md | [graph-report-gating.md](graph-report-gating.md) | planned |
+| 2 | REPO_CONTEXT.md becomes a router | [repo-context-router.md](repo-context-router.md) | **done** |
+| 3 | Stamp artifact freshness into the injected block | [artifact-staleness.md](artifact-staleness.md) | **done** (proposal 1; 2 and 3 still open) |
+| 4 | Stop double-indexing the two wiki tiers | [index-tier-duplication.md](index-tier-duplication.md) | **done** |
+| 5 | Host mode + teach EXECUTION.md about compose | [host-container-mode.md](host-container-mode.md) | **done** |
+| 6 | Gate and conditionally advertise GRAPH_REPORT.md | [graph-report-gating.md](graph-report-gating.md) | **done** |
 | 7 | Resolve the `wiki/` vs `llm-wiki/` name collision | [wiki-tier-naming.md](wiki-tier-naming.md) | after re-run |
 | 8 | Per-page frontmatter | [llm-wiki-page-paths.md](llm-wiki-page-paths.md#deferred-per-page-frontmatter) | deferred |
 | 9 | Passive memory capture (Layer 3) | below | after re-run |
 | 10 | Real embeddings | below | only after #4 |
+
+Items 1-6 are implemented and committed. What's left needs a real `2brain <repo-path>` re-run (regenerates graph/wiki/arch against the current code) before it can be reviewed or decided — see Phase 3 below.
 
 ---
 
@@ -38,12 +40,12 @@ the source tree: the page path is the source path plus `.md`, so there is no rul
 look up and nothing to fail to look up. Tests pass, lint clean. Old flat pages
 self-prune on the next `2brain wiki` run.
 
-## Phase 1 — the last mile
+## Phase 1 — the last mile (done)
 
-Do these next. They are small, they are independent of the pending re-run, and they
-are the only changes that convert work already paid for into work actually used.
+These were small, independent of the pending re-run, and the only changes that
+convert work already paid for into work actually used.
 
-**2. REPO_CONTEXT.md becomes a router.** `_CONTEXT_ARTIFACTS` is a hardcoded 4-tuple
+**2. REPO_CONTEXT.md becomes a router. Done.** `_CONTEXT_ARTIFACTS` is a hardcoded 4-tuple
 that feeds the `CLAUDE.md` directive, while `_build_repo_context()` separately probes
 for `llm-wiki/`, `wiki/` and `arch/`. So the richest artifacts appear in the listing
 and never in the instruction — and of the four that *are* advertised, one is empty,
@@ -52,7 +54,8 @@ shared probe, suppress empty artifacts, and emit trigger conditions ("editing a
 source file → read its llm-wiki page first") instead of a flat manifest. ~40 lines,
 no regeneration needed.
 
-**3. Stamp artifact freshness into the injected block.** Everything needed to catch
+**3. Stamp artifact freshness into the injected block. Done** (proposal 1 —
+proposals 2 and 3 below are still open). Everything needed to catch
 staleness already exists — `.2brain-state.json` holds the generating commit,
 `2brain check` compares it, `2brain hook` automates it — and all of it requires
 someone to go and look. The two files that load automatically carry no freshness
@@ -60,7 +63,7 @@ signal at all. Emit the baseline commit plus "if HEAD differs, prefer the source
 into the managed block. **Sequencing matters: do this alongside #2**, because #2
 increases trust in the artifacts and stale artifacts are worse than missing ones.
 
-**4. Stop double-indexing the wiki tiers.** Confirmed as real code behaviour, not a
+**4. Stop double-indexing the wiki tiers. Done.** Confirmed as real code behaviour, not a
 missed re-run: `_artifact_files()` walks all of `.2brain/`, so the per-file tier
 (64.5% of the corpus) and the directory tier derived from it (14.6%) are both
 indexed. 79% of the corpus is the same facts twice, which depresses IDF on exactly
@@ -68,9 +71,12 @@ the terms that should discriminate — which is why a persuasion doc outranked t
 implementation page in a live query. Exclude the human tier; make the corpus an
 explicit allowlist so the next tier has to opt in.
 
-## Phase 2 — friction and fit
+## Phase 2 — friction and fit (done)
 
-**5. Host mode.** `query` and `check` are pure stdlib and are routed through
+**5. Host mode. Done**, with one deviation: the plan's env var name
+`2BRAIN_MODE` isn't a legal shell identifier (can't start with a digit) — shipped
+as `REPO_MODE` instead, matching this project's existing `REPO_*` convention.
+`query` and `check` are pure stdlib and are routed through
 `podman compose run` like everything else — 2.4 s observed, including starting a GPU
 model server, to do a 50 ms dot product. These are also the most frequently run
 commands. Static allowlist rather than probing autodetection, with the chosen mode
@@ -81,7 +87,7 @@ Bundled with it: `execution.py` has no compose reader, so `EXECUTION.md` omits t
 this project runs entirely through containers. Fixing that turns Layer 2 from a
 Makefile restatement into the layer that answers "how do I run this".
 
-**6. Gate GRAPH_REPORT.md on graph size.** Revised from the earlier "just drop it":
+**6. Gate GRAPH_REPORT.md on graph size. Done.** Revised from the earlier "just drop it":
 it is cheap (3 898 input / 253 output tokens — the expensive pass is `extract`,
 which you need anyway for `graph.json`), it is noise on a 30-file repo at cohesion
 0.06-0.09, and it is genuinely valuable on the 3 000-file repos this tool targets.

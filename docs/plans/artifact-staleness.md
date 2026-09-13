@@ -1,6 +1,10 @@
 # Stale artifacts are silently trusted
 
-**Status: review after the next full `2brain` run.** Yes, this instance was a missed
+**Status: proposal 1 DONE** (the commit stamp is now emitted by
+`injection.py`'s `_freshness_note()`, into every managed block and
+`REPO_CONTEXT.md`). **Proposals 2 (offer the hook) and 3 (host-mode `check`,
+done separately in `host-container-mode.md`) still open; review after the next
+full `2brain` run.** Yes, this instance was a missed
 re-run. The design gap it exposed is not fixed by re-running.
 
 ## What was observed

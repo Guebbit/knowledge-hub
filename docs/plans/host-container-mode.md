@@ -1,6 +1,8 @@
 # Host mode for local-safe commands (+ teaching EXECUTION.md about compose)
 
-**Status: planned.** Two related items: the container routing itself, and the fact
+**Status: DONE** (both parts — `REPO_MODE`/`--host`/`--container` in `2brain.sh`,
+and the compose reader in `execution.py`; see `tests/test_execution.py`). Two
+related items: the container routing itself, and the fact
 that `EXECUTION.md` does not document it.
 
 ---

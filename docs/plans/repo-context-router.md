@@ -1,6 +1,8 @@
 # Layer 5: make REPO_CONTEXT.md a router, not a manifest
 
-**Status: planned.** Highest-leverage change in the stack.
+**Status: DONE** (`_probe_artifacts()` in `injection.py` is the shared source
+now; see the "Where to look" section it emits into `CLAUDE.md`/Copilot/Cursor
+and `REPO_CONTEXT.md`). Highest-leverage change in the stack.
 
 ## Who creates it and why
 

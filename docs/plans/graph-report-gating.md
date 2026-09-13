@@ -1,6 +1,8 @@
 # GRAPH_REPORT.md: gate it on graph size, and advertise it when it earns the line
 
-**Status: planned.** This revises my earlier "drop it from the advertised list" —
+**Status: DONE** (gated on `REPO_GRAPH_CLUSTER_MIN_NODES`, optional in both
+`_REQUIRED_PIPELINE_ARTIFACTS` and index.py's `_REQUIRED_ARTIFACTS`; see
+`tests/test_repo_cli.py`). This revises my earlier "drop it from the advertised list" —
 you were right to push back, and the revision is below.
 
 ## Who creates it and why

@@ -1,6 +1,7 @@
 # The semantic index double-counts the same facts
 
-**Status: confirmed code behaviour, not a stale artifact. Must fix.**
+**Status: DONE** (`_artifact_files()` is now an explicit allowlist that excludes
+`wiki/`; see `tests/test_index.py`).
 
 You asked whether this was you forgetting to re-run, or a real defect. **It is a real
 defect.** The stale artifacts changed the directory *names* in the evidence below,
