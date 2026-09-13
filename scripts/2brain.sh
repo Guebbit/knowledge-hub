@@ -38,6 +38,13 @@
 # graphify output already exists, so re-running is cheap; --force-all rebuilds
 # every layer from scratch.
 #
+# `query` and `check` are pure-stdlib local reads (no graphify, no LLM, no
+# network), so by default they run directly on the host instead of paying for
+# a container + GPU model server start to do a 50ms dot product or a git diff.
+# Every other subcommand still runs in the container, exactly as before.
+# Force either way with REPO_MODE=host|container (env, default: auto) or
+# --host / --container on the command line. The chosen mode is always printed.
+#
 # The module tier (one note per directory) and the arch pages are mirrored into
 # vault/Projects/<repo-name>/Generated/ automatically whenever a vault is found at
 # VAULT_PATH. Per-file wiki pages are machine-tier and stay in the repo. Set
@@ -112,20 +119,40 @@ fi
 
 COMMANDS=" all graph check hook reindex query remember wiki arch "
 
+# Commands that are pure-stdlib local reads: no graphify, no CodeBoarding, no
+# LLM, no network — everything else needs the container.
+LOCAL_SAFE=" query check "
+
+# --host / --container force the mode for this invocation; strip them out
+# before the arg scan below so they never get passed through to repo.py.
+FORCE_MODE=""
+declare -a FILTERED=()
+for arg in "$@"; do
+    case "$arg" in
+        --host) FORCE_MODE="host" ;;
+        --container) FORCE_MODE="container" ;;
+        *) FILTERED+=("$arg") ;;
+    esac
+done
+set -- "${FILTERED[@]}"
+
 # Scan args: find the first argument that is a real directory — that's the repo.
-# Replace it with /target-repo in the container args list. All other args pass through.
-# A leading subcommand name is never treated as the repo path, even if a directory
-# with the same name exists in the current working directory.
+# Its slot in ARGS is a placeholder, resolved once the mode (host vs container)
+# is known below. All other args pass through. A leading subcommand name is
+# never treated as the repo path, even if a directory with the same name
+# exists in the current working directory.
 REPO_PATH=""
+SUBCOMMAND=""
 declare -a ARGS=()
 
 INDEX=0
 for arg in "$@"; do
     if [[ $INDEX -eq 0 && "$COMMANDS" == *" $arg "* ]]; then
         ARGS+=("$arg")
+        SUBCOMMAND="$arg"
     elif [[ -z "$REPO_PATH" && -d "$arg" ]]; then
         REPO_PATH="$(realpath "$arg")"
-        ARGS+=("/target-repo")
+        ARGS+=("__REPO_PATH__")
     else
         ARGS+=("$arg")
     fi
@@ -137,13 +164,58 @@ done
 if [[ -z "$REPO_PATH" ]]; then
     REPO_PATH="$(realpath .)"
 fi
+# No recognised subcommand at position 0 (e.g. bare '2brain <repo>') means the
+# implicit full pipeline — never local-safe, so this only affects the message.
+SUBCOMMAND="${SUBCOMMAND:-all}"
 
 if [[ ! -d "$REPO_PATH" ]]; then
     echo "ERROR: not a directory: $REPO_PATH" >&2
     exit 1
 fi
 
+# Preferred host interpreter, in order; the first one that can actually import
+# the `repo` package wins. Never autodetected the other way (container never
+# falls back to host) — the allowlist above is the only source of truth for
+# which commands are eligible.
+_host_python() {
+    local candidate
+    for candidate in "$ROOT/.venv/bin/python" python3; do
+        if { [[ -x "$candidate" ]] || command -v "$candidate" >/dev/null 2>&1; } \
+            && PYTHONPATH="$ROOT/scripts" "$candidate" -c "import repo" >/dev/null 2>&1; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+MODE="${FORCE_MODE:-${REPO_MODE:-auto}}"
+if [[ "$MODE" != "auto" && "$MODE" != "host" && "$MODE" != "container" ]]; then
+    echo "ERROR: invalid mode '$MODE' (expected: auto, host, container)" >&2
+    exit 1
+fi
+if [[ "$MODE" == "auto" ]]; then
+    if [[ "$LOCAL_SAFE" == *" $SUBCOMMAND "* ]]; then
+        MODE="host"
+    else
+        MODE="container"
+    fi
+fi
+
+if [[ "$MODE" == "host" ]]; then
+    if HOST_PY="$(_host_python)"; then
+        echo "mode: host (${SUBCOMMAND} is local-safe)"
+        RESOLVED_ARGS=("${ARGS[@]/__REPO_PATH__/$REPO_PATH}")
+        exec env PYTHONPATH="$ROOT/scripts" "$HOST_PY" -u "$ROOT/scripts/repo.py" "${RESOLVED_ARGS[@]}"
+    fi
+    echo "mode: container (no usable host interpreter found — falling back)"
+    MODE="container"
+else
+    echo "mode: container"
+fi
+
+RESOLVED_ARGS=("${ARGS[@]/__REPO_PATH__//target-repo}")
 "$ENGINE" compose -f "$ROOT/docker-compose.yml" run --rm \
     -v "${REPO_PATH}:/target-repo:rw" \
     scripts \
-    python -u /scripts/repo.py "${ARGS[@]}"
+    python -u /scripts/repo.py "${RESOLVED_ARGS[@]}"

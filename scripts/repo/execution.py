@@ -41,6 +41,15 @@ _MIGRATION_HINT_FILES = (
     "flyway.conf",
     "manage.py",
 )
+_COMPOSE_FILES = ("docker-compose.yml", "docker-compose.windows.yml")
+# Compose files in this project are hand-authored with a consistent 2-space
+# indent, so a line-oriented indent scan is enough to pull out what
+# EXECUTION.md needs — a full YAML parser (PyYAML) would be the only
+# dependency of its kind in this stdlib-only script.
+_COMPOSE_SERVICE_PATTERN = re.compile(r"^  ([A-Za-z0-9_.-]+):\s*$")
+_COMPOSE_LIST_ITEM_PATTERN = re.compile(r"^\s*-\s*(.+?)\s*$")
+_ENV_SECTION_HEADER_PATTERN = re.compile(r"^#\s*──+\s*([A-Z][A-Z0-9 /]*[A-Z0-9])\s*──+")
+_ENV_VAR_PATTERN = re.compile(r"^([A-Z][A-Z0-9_]*)=(.*)$")
 
 
 def generate(repo_path: str) -> None:
@@ -54,6 +63,8 @@ def generate(repo_path: str) -> None:
     pyproject_scripts = _read_pyproject_scripts(repo / "pyproject.toml")
     workflows = _read_workflows(repo / ".github" / "workflows")
     migration_paths, migration_hints = _read_migrations(repo)
+    compose_files = _read_compose_files(repo)
+    required_env = _read_required_env(repo / ".env-example")
 
     output.write_text(
         _render_markdown(
@@ -63,6 +74,8 @@ def generate(repo_path: str) -> None:
             workflows=workflows,
             migration_paths=migration_paths,
             migration_hints=migration_hints,
+            compose_files=compose_files,
+            required_env=required_env,
         )
     )
     print(f"Execution: {output}")
@@ -251,6 +264,97 @@ def _read_migrations(repo: Path) -> tuple[list[str], list[str]]:
     return migration_paths, hints
 
 
+def _read_compose_services(path: Path) -> list[dict[str, object]]:
+    """Extract service name, image/build, volumes, and depends_on from one compose file."""
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    services: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+    current_key: str | None = None
+    in_services = False
+
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+
+        if line.rstrip() == "services:":
+            in_services = True
+            continue
+        if not in_services:
+            continue
+        if indent == 0:
+            # Back out to a top-level sibling key (volumes:, networks:, ...) — done.
+            break
+
+        service_match = _COMPOSE_SERVICE_PATTERN.match(line) if indent == 2 else None
+        if service_match:
+            current = {"name": service_match.group(1), "image": None, "build": False, "volumes": [], "depends_on": []}
+            services.append(current)
+            current_key = None
+            continue
+        if current is None:
+            continue
+
+        if indent == 4:
+            stripped = line.strip()
+            if stripped == "volumes:":
+                current_key = "volumes"
+            elif stripped == "depends_on:":
+                current_key = "depends_on"
+            elif stripped.startswith("image:"):
+                current["image"] = stripped.removeprefix("image:").strip()
+                current_key = None
+            elif stripped.startswith("build:"):
+                current["build"] = True
+                current_key = None
+            else:
+                current_key = None
+            continue
+
+        if indent >= 6 and current_key in ("volumes", "depends_on"):
+            item_match = _COMPOSE_LIST_ITEM_PATTERN.match(line)
+            if item_match:
+                current[current_key].append(item_match.group(1))
+
+    return services
+
+
+def _read_compose_files(repo: Path) -> list[dict[str, object]]:
+    """Read every known compose file present, so multi-platform setups are all documented."""
+    files: list[dict[str, object]] = []
+    for name in _COMPOSE_FILES:
+        path = repo / name
+        if not path.exists():
+            continue
+        files.append({"file": name, "services": _read_compose_services(path)})
+    return files
+
+
+def _read_required_env(path: Path) -> list[tuple[str, str]]:
+    """Return (var, default-or-example) pairs from .env-example's REQUIRED section.
+
+    Deliberately narrow: .env-example documents every optional preset/API key
+    too, which would drown the one thing an assistant actually needs before it
+    can run anything. The REQUIRED section header is the same convention the
+    file already uses to mark them.
+    """
+    if not path.exists():
+        return []
+    in_required = False
+    required: list[tuple[str, str]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        header_match = _ENV_SECTION_HEADER_PATTERN.match(line)
+        if header_match:
+            in_required = header_match.group(1).strip() == "REQUIRED"
+            continue
+        if not in_required:
+            continue
+        var_match = _ENV_VAR_PATTERN.match(line.strip())
+        if var_match:
+            required.append((var_match.group(1), var_match.group(2)))
+    return required
+
+
 def _quick_commands(
     package_scripts: dict[str, str],
     make_targets: list[str],
@@ -293,6 +397,8 @@ def _render_markdown(
     workflows: list[dict[str, object]],
     migration_paths: list[str],
     migration_hints: list[str],
+    compose_files: list[dict[str, object]],
+    required_env: list[tuple[str, str]],
 ) -> str:
     """Render extracted execution metadata into EXECUTION.md markdown."""
     lines: list[str] = []
@@ -300,6 +406,54 @@ def _render_markdown(
     lines.append("")
     lines.append("_Generated by 2brain from repository metadata (scripts, CI, migrations)._")
     lines.append("")
+
+    if compose_files:
+        lines.append("## Container Runtime")
+        lines.append(
+            "Everything here runs through `docker compose` / `podman compose` — there is no "
+            "bare-metal `pip install` path for the pipeline itself."
+        )
+        for entry in compose_files:
+            file_name = str(entry["file"])
+            services = entry["services"]
+            lines.append("")
+            lines.append(f"### `{file_name}`")
+            for service in services:
+                name = service["name"]
+                base = f"image `{service['image']}`" if service["image"] else "built from `build:`"
+                lines.append(f"- **{name}** — {base}")
+                if service["depends_on"]:
+                    lines.append(f"  - depends on: {', '.join(service['depends_on'])}")
+                if service["volumes"]:
+                    lines.append("  - mounts:")
+                    for volume in service["volumes"]:
+                        lines.append(f"    - `{volume}`")
+            lines.append("")
+            lines.append(
+                f"Run pattern: `docker compose -f {file_name} run --rm <service> <command>` "
+                "(or `podman compose`, per `CONTAINER_ENGINE` in `.env`) — this is the actual "
+                "entry point, not a direct interpreter invocation."
+            )
+        if len(compose_files) > 1:
+            lines.append("")
+            lines.append(
+                f"Platform variants: `{_COMPOSE_FILES[1]}` is standalone (does not merge with "
+                f"`{_COMPOSE_FILES[0]}`) — it is the CPU/Windows definition, used directly via `-f`, "
+                "not as a compose override."
+            )
+        lines.append("")
+        lines.append(
+            "Exception: the `2brain` CLI wrapper runs `query` and `check` directly on the host "
+            "(pure stdlib, no container) unless `--host`/`--container` or `REPO_MODE` forces "
+            "otherwise — every other subcommand still goes through the pattern above."
+        )
+        lines.append("")
+
+    if required_env:
+        lines.append("## Required Environment (.env-example)")
+        for var, default in required_env:
+            lines.append(f"- `{var}={default}`" if default else f"- `{var}`")
+        lines.append("")
 
     quick = _quick_commands(package_scripts, make_targets, pyproject_scripts)
     lines.append("## Quick Commands")
