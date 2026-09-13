@@ -9,7 +9,9 @@ Incrementality is the core design:
 - the changed set is expanded to graph neighbors up to 2 hops
 - a per-file content-hash cache skips pages whose source did not change
 
-Page naming replaces `/` and `.` with `_` (e.g. src/auth/login.ts → src_auth_login_ts.md).
+Pages mirror the source tree with `.md` appended (src/auth/login.ts →
+llm-wiki/src/auth/login.ts.md), so the page path for a file is derivable
+without knowing any naming rule and can never collide.
 
 AUDIENCE: this tier is written for machines. One page per source file is the
 right granularity for the semantic index and REPO_CONTEXT.md — an AI resolves a
@@ -115,9 +117,19 @@ def _save_cache(repo_path: str, pages: dict[str, dict[str, str]]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def page_name_for(rel_path: str) -> str:
-    """Return the wiki page filename for a source file (src/a.ts → src_a_ts.md)."""
-    return rel_path.replace("/", "_").replace(".", "_") + ".md"
+def page_path_for(rel_path: str) -> str:
+    """Return the page path for a source file, relative to the llm-wiki dir.
+
+    The source tree is mirrored and `.md` appended (src/a.ts → src/a.ts.md).
+    The previous scheme flattened separators (src/a.ts → src_a_ts.md), which
+    was both lossy and ambiguous: `scripts/repo/wiki.py`, `scripts/repo_wiki.py`
+    and `scripts/repo/wiki_py` all mapped onto the same file, so one silently
+    overwrote the others. Mirroring borrows the filesystem's own uniqueness
+    guarantee, and makes the mapping invertible (strip the `.md`) — an
+    assistant that knows the source path knows the page path with no rule to
+    look up, which is what gets this tier actually used.
+    """
+    return rel_path + ".md"
 
 
 def _hash_bytes(data: bytes) -> str:
@@ -282,22 +294,28 @@ def _generate_overview(files: list[str], adjacency: dict[str, set[str]]) -> str:
 
 
 def _prune_stale_pages(repo_path: str, valid_pages: set[str]) -> list[str]:
-    """Delete wiki pages whose source file no longer exists; return removed names."""
+    """Delete wiki pages whose source file no longer exists; return removed paths."""
     out_dir = llm_wiki_dir(repo_path)
     if not out_dir.exists():
         return []
     removed: list[str] = []
     keep = valid_pages | {_OVERVIEW_FILENAME}
-    for page in out_dir.glob("*.md"):
-        if page.name not in keep:
+    for page in out_dir.rglob("*.md"):
+        rel = page.relative_to(out_dir).as_posix()
+        if rel not in keep:
             page.unlink()
-            removed.append(page.name)
-    return removed
+            removed.append(rel)
+    # Mirroring the source tree means a deleted page can strand an empty
+    # directory. Walk deepest-first so nested empties collapse in one pass.
+    for directory in sorted((d for d in out_dir.rglob("*") if d.is_dir()), reverse=True):
+        if not any(directory.iterdir()):
+            directory.rmdir()
+    return sorted(removed)
 
 
 def _page_is_fresh(repo_path: str, rel_path: str, cached: dict[str, str], content_hash: str) -> bool:
     """A page is fresh when its cached source hash matches and the page file still exists."""
-    return cached.get("hash") == content_hash and (llm_wiki_dir(repo_path) / page_name_for(rel_path)).exists()
+    return cached.get("hash") == content_hash and (llm_wiki_dir(repo_path) / page_path_for(rel_path)).exists()
 
 
 def generate(
@@ -345,11 +363,11 @@ def generate(
             continue
         plan.append((rel_path, content_hash))
 
-    valid_pages = {page_name_for(f) for f in candidates}
+    valid_pages = {page_path_for(f) for f in candidates}
 
     if dry_run:
         for rel_path, _ in plan:
-            print(f"LLM Wiki : would regenerate {page_name_for(rel_path)}  ({rel_path})")
+            print(f"LLM Wiki : would regenerate {page_path_for(rel_path)}  ({rel_path})")
         if not plan:
             print("LLM Wiki : nothing to regenerate (all pages fresh)")
         return {
@@ -369,13 +387,15 @@ def generate(
     for rel_path, content_hash in plan:
         neighbors = adjacency.get(rel_path, set())
         page = _generate_page(repo, rel_path, neighbors)
-        page_file = out_dir / page_name_for(rel_path)
+        page_rel = page_path_for(rel_path)
+        page_file = out_dir / page_rel
+        page_file.parent.mkdir(parents=True, exist_ok=True)
         page_file.write_text(page, encoding="utf-8")
-        cache[rel_path] = {"hash": content_hash, "page": page_file.name, "generated_at": now_iso()}
+        cache[rel_path] = {"hash": content_hash, "page": page_rel, "generated_at": now_iso()}
         # Persist after every page, not once at the end: a run interrupted at page
         # 300 of 430 must not throw away the 300 it already paid for.
         _save_cache(repo_path, cache)
-        written.append(page_file.name)
+        written.append(page_rel)
         progress.step(rel_path)
 
     for stale in set(cache) - set(candidates):
@@ -398,7 +418,7 @@ def generate(
         "dry_run": False,
         "written": written,
         "removed": removed,
-        "page_count": len(list(out_dir.glob("*.md"))) - (1 if overview_path.exists() else 0),
+        "page_count": len(list(out_dir.rglob("*.md"))) - (1 if overview_path.exists() else 0),
         # Handed to the module tier so it can group the documented set and lift
         # the file-level dependency graph to module level.
         "candidates": candidates,
@@ -415,7 +435,7 @@ def read_pages(repo_path: str, candidates: list[str]) -> dict[str, str]:
     out_dir = llm_wiki_dir(repo_path)
     pages: dict[str, str] = {}
     for rel_path in candidates:
-        page = out_dir / page_name_for(rel_path)
+        page = out_dir / page_path_for(rel_path)
         if page.is_file():
             pages[rel_path] = page.read_text(encoding="utf-8", errors="replace")
     return pages

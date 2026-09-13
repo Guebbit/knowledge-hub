@@ -114,7 +114,7 @@ class TestNaming:
     def test_never_collides_with_a_per_file_wiki_page(self):
         from repo import llm_wiki
 
-        assert modules.page_name_for("src/auth", "r") != f"r_{llm_wiki.page_name_for('src/auth.ts')}"
+        assert modules.page_name_for("src/auth", "r") != f"r_{llm_wiki.page_path_for('src/auth.ts')}"
 
     def test_root_module_has_a_stable_name(self):
         assert modules.page_name_for("", "r") == "r_ROOT.md"

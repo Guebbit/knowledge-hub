@@ -103,3 +103,19 @@ class TestExpandNeighbors:
 
     def test_unknown_seed_survives(self):
         assert llm_wiki.expand_neighbors({"ghost"}, self.ADJACENCY) == {"ghost"}
+
+
+class TestPagePathMapping:
+    """The per-file tier mirrors the source tree instead of flattening it."""
+
+    def test_page_path_is_the_source_path_plus_md(self):
+        assert llm_wiki.page_path_for("scripts/repo/wiki.py") == "scripts/repo/wiki.py.md"
+
+    def test_mapping_is_invertible(self):
+        for rel in ("a.ts", "src/a.ts", "src/deep/nest/a.ts", "a/b.c.d.py"):
+            assert llm_wiki.page_path_for(rel).removesuffix(".md") == rel
+
+    def test_paths_that_collided_under_the_flat_scheme_stay_distinct(self):
+        """`_`-flattening mapped all three of these onto scripts_repo_wiki_py.md."""
+        collided = ("scripts/repo/wiki.py", "scripts/repo_wiki.py", "scripts/repo/wiki_py")
+        assert len({llm_wiki.page_path_for(p) for p in collided}) == len(collided)

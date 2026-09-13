@@ -360,7 +360,7 @@ def write_repo_context(
     for artifact_path, description in _CONTEXT_ARTIFACTS:
         lines.append(f"- `{artifact_path}` — {description}")
     llm_wiki_dir = repo / _OUT / "llm-wiki"
-    if llm_wiki_dir.is_dir() and any(llm_wiki_dir.glob("*.md")):
+    if llm_wiki_dir.is_dir() and any(llm_wiki_dir.rglob("*.md")):
         lines.append(
             f"- `{_OUT}/llm-wiki/` — per-file LLM wiki: one machine-oriented page per "
             "source file plus `OVERVIEW.md` (generated — do not edit by hand; regenerate with `2brain wiki <repo-path>`)"
