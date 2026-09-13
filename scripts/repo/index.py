@@ -29,13 +29,23 @@ _REQUIRED_ARTIFACTS = (
     _OUT / "EXECUTION.md",
     _OUT / "REPO_MEMORY.md",
 )
-_SKIP_INDEX_PATHS = {
-    str(_OUT / ".2brain-state.json"),
-    str(_OUT / "repo-index.json"),
-    str(_OUT / "repo-memory.json"),
-    str(_OUT / "llm-wiki" / ".llm-wiki-cache.json"),
-    str(_OUT / "wiki" / ".wiki-cache.json"),
-}
+# Explicit allowlist for the semantic corpus. wiki/ (the human-facing
+# per-directory tier) is deliberately NOT here: it is written *from*
+# llm-wiki/'s per-file pages (wiki.py's read_pages()), so indexing both tiers
+# means ~79% of the corpus is the same facts twice, which depresses IDF on
+# exactly the terms that should discriminate a query. A new artifact tier
+# must be added here explicitly rather than silently joining by virtue of
+# living under OUT_DIR.
+_ALLOWLISTED_ARTIFACT_FILES = (
+    _GRAPH_REPORT_PATH,
+    _OUT / "EXECUTION.md",
+    _OUT / "REPO_MEMORY.md",
+    _OUT / "REPO_CONTEXT.md",
+)
+_ALLOWLISTED_MD_DIRS = (
+    _OUT / "llm-wiki",
+    _OUT / "arch",
+)
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]{2,}")
 _MAX_CHUNK_CHARS = 1200
 _QUERY_EXPANSION_TERMS = 8
@@ -106,32 +116,24 @@ def _chunk_plain_text(text: str) -> list[str]:
 
 
 def _artifact_files(repo: Path) -> list[Path]:
-    """Return indexable <OUT_DIR> artifact files, skipping generated index/state.
+    """Return indexable <OUT_DIR> artifact files: an explicit allowlist.
 
-    Everything under GRAPHIFY_OUT except GRAPH_REPORT.md is excluded: graph.json,
-    manifest.json and the .graphify_* files are graphify's raw node/edge/analysis
-    dumps, not prose, so tokenizing them as text produces thousands of meaningless
-    chunks. graphify also keeps a dated snapshot of its own output alongside the
-    live copy (e.g. graphify-out/2026-08-25/) — without this exclusion that gets
-    walked too, indexing the same raw data a second time under a different path.
-    GRAPH_REPORT.md is graphify's one human/AI-readable artifact, so it stays.
+    Only the top-level generated reports plus llm-wiki/ and arch/ (both
+    per-file/per-topic docs) are indexed — see _ALLOWLISTED_MD_DIRS above for
+    why wiki/ is excluded. Everything else generated under OUT_DIR (raw
+    graphify dumps, incremental caches, repo-index.json/repo-memory.json/
+    .2brain-state.json) was never prose and is skipped by construction: it
+    would have to be named in an allowlist entry to be indexed at all.
     """
     out_dir = repo / config.OUT_DIR
     if not out_dir.exists():
         return []
 
-    files: list[Path] = []
-    for path in sorted(out_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(repo)
-        if str(rel) in _SKIP_INDEX_PATHS:
-            continue
-        if rel.is_relative_to(_GRAPHIFY_OUT_DIR) and rel != _GRAPH_REPORT_PATH:
-            continue
-        if path.suffix.lower() not in {".md", ".json", ".txt"}:
-            continue
-        files.append(path)
+    files: list[Path] = [repo / rel for rel in _ALLOWLISTED_ARTIFACT_FILES if (repo / rel).is_file()]
+    for rel_dir in _ALLOWLISTED_MD_DIRS:
+        directory = repo / rel_dir
+        if directory.is_dir():
+            files.extend(p for p in sorted(directory.rglob("*.md")) if p.is_file())
     return files
 
 
