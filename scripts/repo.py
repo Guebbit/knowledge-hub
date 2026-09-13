@@ -473,8 +473,9 @@ def _build_layers(repo_path: str, *, provider: str, model: str, mode: str, ai_ta
         index_revision=str(index_meta["revision"]),
         index_chunks=int(index_meta["chunk_count"]),
         memory_count=int(index_meta["memory_count"]),
+        head=head,
     )
-    injected_paths = repo_injection.inject_for_target(repo_path, ai_target=ai_target)
+    injected_paths = repo_injection.inject_for_target(repo_path, ai_target=ai_target, head=head)
 
     print(f"Memory   : {memory_report}")
     print(f"Index    : {index_meta['index_path']}  (chunks={index_meta['chunk_count']})")

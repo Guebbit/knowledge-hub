@@ -19,6 +19,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+from repo import memory as repo_memory
 from shared import config
 
 _MARKER_START = "<!-- 2brain:start — regenerate with: 2brain <repo-path> -->"
@@ -35,57 +36,135 @@ _HASH_MARKER_PATTERN = re.compile(
 
 _OUT = config.OUT_DIR
 _PRIMARY_CONTEXT_PATH = f"{_OUT}/REPO_CONTEXT.md"
-# (path, human description) pairs — the single source for both the reference
-# path list and the described artifact list, so they can never drift apart.
-# GRAPH_REPORT.md is graphify's own product and therefore lives one level deeper.
-_CONTEXT_ARTIFACTS = (
-    (f"{config.GRAPHIFY_OUT}/GRAPH_REPORT.md", "structural and semantic code graph report"),
-    (f"{_OUT}/EXECUTION.md", "runnable build/test/CI/migration knowledge"),
-    (f"{_OUT}/REPO_MEMORY.md", "durable repository memory entries"),
-    (f"{_OUT}/repo-index.json", "semantic retrieval index"),
-)
-_CONTEXT_REFERENCE_PATHS = tuple(path for path, _ in _CONTEXT_ARTIFACTS)
 
 # Public: the canonical set of AI integration targets. repo.py imports this so
 # the CLI choices and this module's validation share one definition.
 AI_TARGETS = ("claude", "copilot", "cursor", "neutral")
 
 
-def _expanded_sources_inline() -> str:
-    return ", ".join(f"`{path}`" for path in _CONTEXT_REFERENCE_PATHS)
+def _probe_artifacts(repo: Path) -> list[tuple[str, str]]:
+    """Return (path, description) for artifacts that exist AND carry real content.
+
+    This is the single source both the editor-bridge instruction (_routing_rules)
+    and REPO_CONTEXT.md's own listing (write_repo_context) read from, so the
+    instruction that reaches an assistant can never name a different set than
+    what write_repo_context actually describes — that drift (the richest
+    artifacts appearing in the listing but never in the instruction) is what let
+    llm-wiki go unadvertised. repo-index.json is deliberately never listed here:
+    it is a query backend, not a document meant to be opened.
+    """
+    found: list[tuple[str, str]] = []
+
+    graph_report = repo / config.GRAPHIFY_OUT / "GRAPH_REPORT.md"
+    if graph_report.exists():
+        found.append((str(graph_report.relative_to(repo)), "structural and semantic code graph report"))
+
+    execution = repo / _OUT / "EXECUTION.md"
+    if execution.exists():
+        found.append((f"{_OUT}/EXECUTION.md", "runnable build/test/CI/migration knowledge"))
+
+    # An empty "No memory entries recorded yet." report is worse than not
+    # listing it: it sends a reader to open a file that tells them nothing.
+    if repo_memory.load_entries(str(repo)):
+        found.append((f"{_OUT}/REPO_MEMORY.md", "durable repository memory entries"))
+
+    llm_wiki_dir = repo / _OUT / "llm-wiki"
+    if llm_wiki_dir.is_dir() and any(llm_wiki_dir.rglob("*.md")):
+        found.append((
+            f"{_OUT}/llm-wiki/",
+            "per-file machine-oriented pages, one per source file (page path = source path + `.md`)",
+        ))
+
+    wiki_dir = repo / _OUT / "wiki"
+    if wiki_dir.is_dir() and any(wiki_dir.glob("*.md")):
+        found.append((f"{_OUT}/wiki/", "human-oriented module notes, mirrored into Obsidian"))
+
+    arch_dir = repo / _OUT / "arch"
+    if arch_dir.is_dir() and any(arch_dir.glob("*.md")):
+        found.append((f"{_OUT}/arch/", "component/topic pages with Mermaid diagrams"))
+
+    return found
 
 
-def _claude_inline() -> str:
-    """Managed CLAUDE.md block: an @-import plus what to do with it.
+def _freshness_note(head: str) -> str:
+    if not head:
+        return ""
+    return (
+        f"Artifacts generated from commit `{head}`. If `git rev-parse HEAD` differs, "
+        "prefer the source over these artifacts and say so."
+    )
+
+
+def _routing_rules(repo: Path, *, head: str) -> str:
+    """Trigger conditions, not a manifest — what a listing lacks is a reason to open it.
+
+    Built from the same _probe_artifacts() probe REPO_CONTEXT.md uses, so a
+    trigger is only emitted for an artifact that actually exists and has
+    content: an unconditional list gives equal weight to a populated wiki and
+    an empty memory report, which is what made the artifacts easy to ignore.
+    """
+    present = {path for path, _ in _probe_artifacts(repo)}
+    rules: list[str] = []
+    if any(path.startswith(f"{_OUT}/llm-wiki/") for path in present):
+        rules.append(
+            "- **Editing or reading a source file** → read "
+            f"`{_OUT}/llm-wiki/<path>.md` first (page path = source path + `.md`). "
+            "It carries the file's purpose, key elements, graph neighbours, and gotchas "
+            "not in the source."
+        )
+    if any(path.startswith(f"{_OUT}/arch/") for path in present):
+        rules.append(
+            f'- **"How is this structured?" / "where does X live?"** → `{_OUT}/arch/overview.md`, '
+            "then the component page it points to."
+        )
+    if f"{_OUT}/EXECUTION.md" in present:
+        rules.append(f'- **"How do I run / build / test / deploy this?"** → `{_OUT}/EXECUTION.md`.')
+    if any(path.endswith("GRAPH_REPORT.md") for path in present):
+        rules.append(
+            "- **First contact with an unfamiliar large codebase** → "
+            f"`{config.GRAPHIFY_OUT}/GRAPH_REPORT.md` for structural orientation."
+        )
+    rules.append(
+        '- **Anything else, or you don\'t know which file** → `2brain query <repo-path> "question"`.'
+    )
+    freshness = _freshness_note(head)
+    if freshness:
+        rules.append("")
+        rules.append(freshness)
+    return "\n".join(rules)
+
+
+def _claude_inline(repo: Path, *, head: str) -> str:
+    """Managed CLAUDE.md block: an @-import plus routing rules for what it points to.
 
     Claude Code auto-loads CLAUDE.md and resolves @-imports, so the import is
     what actually puts REPO_CONTEXT.md in context. REPO_CONTEXT.md then only
     *names* the other artifacts — they are backticked paths, not imports — so
-    without the instruction below Claude sees a list of filenames and no reason
-    to open any of them. Copilot and Cursor get the same directive.
+    without trigger conditions below, Claude sees a list of filenames and no
+    reason to open any of them. Copilot and Cursor get the same directive.
     """
     return (
         f"{_MARKER_START}\n"
         "Use the repository context generated by 2brain before proposing changes.\n"
-        f"@{_PRIMARY_CONTEXT_PATH}\n"
-        f"It lists the expanded sources: {_expanded_sources_inline()}. Read the ones\n"
-        "relevant to the task, or retrieve across all of them with\n"
-        '`2brain query <repo-path> "your question"`.\n'
+        f"@{_PRIMARY_CONTEXT_PATH}\n\n"
+        "## Where to look\n\n"
+        f"{_routing_rules(repo, head=head)}\n"
         f"{_MARKER_END}"
     )
 
 
-def _copilot_inline() -> str:
+def _copilot_inline(repo: Path, *, head: str) -> str:
     return (
         f"{_MARKER_START}\n"
         "Use the repository context generated by 2brain before proposing changes.\n"
-        f"Primary context: `{_PRIMARY_CONTEXT_PATH}`\n"
-        f"Expanded sources: {_expanded_sources_inline()}\n"
+        f"Primary context: `{_PRIMARY_CONTEXT_PATH}`\n\n"
+        "## Where to look\n\n"
+        f"{_routing_rules(repo, head=head)}\n"
         f"{_MARKER_END}"
     )
 
 
-def _cursor_rule() -> str:
+def _cursor_rule(repo: Path, *, head: str) -> str:
     lines = [
         "---",
         "description: 2brain repository context",
@@ -95,10 +174,12 @@ def _cursor_rule() -> str:
         "",
         "# Intentional: repository context must be applied globally for consistent sessions.",
         f"Use `{_PRIMARY_CONTEXT_PATH}` as the primary repository context.",
-        "For detailed references consult:",
+        "",
+        "## Where to look",
+        "",
+        _routing_rules(repo, head=head),
+        "",
     ]
-    lines.extend(f"- `{path}`" for path in _CONTEXT_REFERENCE_PATHS)
-    lines.append("")
     return "\n".join(lines)
 
 
@@ -296,26 +377,26 @@ def _write_repo_hygiene(repo: Path) -> list[str]:
     return outputs
 
 
-def _inject_claude(repo: Path) -> list[str]:
+def _inject_claude(repo: Path, *, head: str) -> list[str]:
     claude_md = repo / "CLAUDE.md"
-    return [str(claude_md)] if _replace_or_append(claude_md, block=_claude_inline()) else []
+    return [str(claude_md)] if _replace_or_append(claude_md, block=_claude_inline(repo, head=head)) else []
 
 
-def _inject_copilot(repo: Path) -> list[str]:
+def _inject_copilot(repo: Path, *, head: str) -> list[str]:
     copilot = repo / ".github" / "copilot-instructions.md"
-    return [str(copilot)] if _replace_or_append(copilot, block=_copilot_inline()) else []
+    return [str(copilot)] if _replace_or_append(copilot, block=_copilot_inline(repo, head=head)) else []
 
 
-def _inject_cursor(repo: Path) -> list[str]:
+def _inject_cursor(repo: Path, *, head: str) -> list[str]:
     cursor_rule = repo / ".cursor" / "rules" / "2brain.mdc"
-    return [str(cursor_rule)] if _write_if_changed(cursor_rule, content=_cursor_rule()) else []
+    return [str(cursor_rule)] if _write_if_changed(cursor_rule, content=_cursor_rule(repo, head=head)) else []
 
 
-def _inject_neutral(_repo: Path) -> list[str]:
+def _inject_neutral(_repo: Path, *, head: str) -> list[str]:
     return []
 
 
-_TARGET_WRITERS: dict[str, Callable[[Path], list[str]]] = {
+_TARGET_WRITERS: dict[str, Callable[..., list[str]]] = {
     "claude": _inject_claude,
     "copilot": _inject_copilot,
     "cursor": _inject_cursor,
@@ -323,7 +404,7 @@ _TARGET_WRITERS: dict[str, Callable[[Path], list[str]]] = {
 }
 
 
-def inject_for_target(repo_path: str, *, ai_target: str) -> list[str]:
+def inject_for_target(repo_path: str, *, ai_target: str, head: str = "") -> list[str]:
     """Write integration files for one AI target and return created/updated paths."""
     repo = Path(repo_path)
     context = repo / _OUT / "REPO_CONTEXT.md"
@@ -334,7 +415,7 @@ def inject_for_target(repo_path: str, *, ai_target: str) -> list[str]:
 
     # Hygiene files are about the generated tree itself, not the assistant, so
     # they are written even for the neutral target.
-    return _write_repo_hygiene(repo) + _TARGET_WRITERS[ai_target](repo)
+    return _write_repo_hygiene(repo) + _TARGET_WRITERS[ai_target](repo, head=head)
 
 
 def write_repo_context(
@@ -345,6 +426,7 @@ def write_repo_context(
     index_revision: str,
     index_chunks: int,
     memory_count: int,
+    head: str = "",
 ) -> Path:
     """Build <OUT_DIR>/REPO_CONTEXT.md summarizing canonical 2brain artifacts."""
     repo = Path(repo_path)
@@ -357,28 +439,16 @@ def write_repo_context(
     lines.append("_Canonical 2brain context source for AI editors._")
     lines.append("")
     lines.append("## Core Artifacts")
-    for artifact_path, description in _CONTEXT_ARTIFACTS:
+    for artifact_path, description in _probe_artifacts(repo):
         lines.append(f"- `{artifact_path}` — {description}")
-    llm_wiki_dir = repo / _OUT / "llm-wiki"
-    if llm_wiki_dir.is_dir() and any(llm_wiki_dir.rglob("*.md")):
-        lines.append(
-            f"- `{_OUT}/llm-wiki/` — per-file LLM wiki: one machine-oriented page per "
-            "source file plus `OVERVIEW.md` (generated — do not edit by hand; regenerate with `2brain wiki <repo-path>`)"
-        )
-    wiki_dir = repo / _OUT / "wiki"
-    if wiki_dir.is_dir() and any(wiki_dir.glob("*.md")):
-        lines.append(
-            f"- `{_OUT}/wiki/` — living wiki: one note per meaningful directory plus "
-            "an `INDEX.md` hub, mirrored into the Obsidian vault (generated — do not edit by hand; "
-            "regenerate with `2brain wiki <repo-path>`)"
-        )
-    arch_dir = repo / _OUT / "arch"
-    if arch_dir.is_dir() and any(arch_dir.glob("*.md")):
-        lines.append(
-            f"- `{_OUT}/arch/` — architecture layer: component/topic pages with "
-            "Mermaid diagrams plus `overview.md` (generated — do not edit by hand; "
-            "regenerate with `2brain arch <repo-path>`)"
-        )
+    lines.append(
+        f"- `{_OUT}/repo-index.json` — semantic retrieval index backing "
+        '`2brain query` (a query backend, not a document to open directly)'
+    )
+    lines.append("")
+    lines.append("## Where to look")
+    lines.append("")
+    lines.append(_routing_rules(repo, head=head))
     lines.append("")
     lines.append("## Index Metadata")
     lines.append(f"- Provider: `{provider}`")
