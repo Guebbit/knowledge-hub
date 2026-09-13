@@ -23,9 +23,11 @@ _INDEX_SUBPATH = _OUT / "repo-index.json"
 _GRAPHIFY_OUT_DIR = Path(config.GRAPHIFY_OUT)
 _GRAPH_REPORT_PATH = _GRAPHIFY_OUT_DIR / "GRAPH_REPORT.md"
 # GRAPH_REPORT.md is graphify's own product, so it lives in the nested graphify
-# output dir; the other two are ours and sit at the root of OUT_DIR.
+# output dir. It is NOT required: repo.py gates it on graph size and skips it
+# outright for small graphs, so its absence is a normal outcome, not a broken
+# pipeline (see _ALLOWLISTED_ARTIFACT_FILES below for how it's still indexed
+# on the runs where it does exist).
 _REQUIRED_ARTIFACTS = (
-    _GRAPH_REPORT_PATH,
     _OUT / "EXECUTION.md",
     _OUT / "REPO_MEMORY.md",
 )

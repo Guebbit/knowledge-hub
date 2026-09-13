@@ -95,10 +95,14 @@ _PORCELAIN_STATUS_PREFIX_LENGTH = 3
 
 
 _REQUIRED_PIPELINE_ARTIFACTS = (
-    # GRAPH_REPORT.md is graphify's own product and lands in its nested dir.
-    _GRAPHIFY_OUT / "GRAPH_REPORT.md",
     _OUT / "EXECUTION.md",
 )
+# graphify's `cluster-only` pass (names communities, writes GRAPH_REPORT.md) is
+# only worth its cost above this many graph nodes: below it, "communities" are
+# partition noise over a graph small enough that a reader could just read all
+# the files, per docs/plans/graph-report-gating.md. graph.json's top-level
+# `nodes` list is what graphify itself reports as node count.
+_GRAPH_CLUSTER_MIN_NODES = int(os.getenv("REPO_GRAPH_CLUSTER_MIN_NODES", "500"))
 _QUERY_EXCERPT_LENGTH = 320
 _AI_TARGET_PROMPT = (
     ("1", "claude", "Claude Code"),
@@ -192,6 +196,19 @@ def _run_with_heartbeat(cmd: list[str], *, cwd: str, label: str, env: dict[str, 
         ticker.join()
 
 
+def _graph_node_count(repo_path: str) -> int:
+    """Return the node count graphify's own graph.json reports, or 0 if unreadable."""
+    graph_path = Path(repo_path) / _GRAPHIFY_OUT / "graph.json"
+    if not graph_path.exists():
+        return 0
+    try:
+        data = json.loads(graph_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return 0
+    nodes = data.get("nodes") if isinstance(data, dict) else None
+    return len(nodes) if isinstance(nodes, list) else 0
+
+
 def _run_graphify(repo_path: str, provider: str, model: str, update: bool) -> None:
     backend = _BACKEND_MAP.get(provider)
     if not backend:
@@ -244,16 +261,29 @@ def _run_graphify(repo_path: str, provider: str, model: str, update: bool) -> No
         # communities, or writes GRAPH_REPORT.md itself (that split shipped
         # without a matching major-version bump). `graphify update` still does
         # this inline (via _rebuild_code), so only the extract path needs the
-        # follow-up call. Without this, GRAPH_REPORT.md never gets produced and
-        # _require_pipeline_artifacts() below dies with a confusing "missing
-        # artifact" error that looks unrelated to the dependency bump.
-        cluster_cmd = ["graphify", "cluster-only", ".", "--backend", backend, "--model", model]
-        if provider == "ollama":
-            cluster_cmd.extend(["--max-concurrency", "1"])
-        print(f"Graphify : cluster-only  backend={backend}  model={model}  (names communities, writes GRAPH_REPORT.md)")
-        cluster_returncode = _run_with_heartbeat(cluster_cmd, cwd=repo_path, label="Cluster", env=env)
-        if cluster_returncode != 0:
-            die(f"graphify cluster-only exited with code {cluster_returncode}")
+        # follow-up call. GRAPH_REPORT.md is optional (see
+        # _REQUIRED_PIPELINE_ARTIFACTS): below _GRAPH_CLUSTER_MIN_NODES nodes,
+        # "communities" are partition noise over a graph small enough to just
+        # read, so the call — and its cost — is skipped outright rather than
+        # producing a report nobody should trust.
+        node_count = _graph_node_count(repo_path)
+        if node_count < _GRAPH_CLUSTER_MIN_NODES:
+            print(
+                f"Graphify : skipping cluster-only ({node_count} nodes < "
+                f"REPO_GRAPH_CLUSTER_MIN_NODES={_GRAPH_CLUSTER_MIN_NODES}) — "
+                "GRAPH_REPORT.md not generated"
+            )
+        else:
+            cluster_cmd = ["graphify", "cluster-only", ".", "--backend", backend, "--model", model]
+            if provider == "ollama":
+                cluster_cmd.extend(["--max-concurrency", "1"])
+            print(
+                f"Graphify : cluster-only  backend={backend}  model={model}  "
+                f"({node_count} nodes; names communities, writes GRAPH_REPORT.md)"
+            )
+            cluster_returncode = _run_with_heartbeat(cluster_cmd, cwd=repo_path, label="Cluster", env=env)
+            if cluster_returncode != 0:
+                die(f"graphify cluster-only exited with code {cluster_returncode}")
 
 
 def _repo_state_file(repo_path: str) -> Path:
