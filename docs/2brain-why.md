@@ -14,7 +14,7 @@ Only two of the three layers are — and only on the first run.
 
 After the first run, `wiki` and `arch` are incremental: `wiki` only regenerates pages for files that changed since last time (an unchanged file is a cache hit — zero tokens), and `arch` only re-analyzes what changed. A repeat `2brain <repo>` run on an otherwise-untouched repo is close to free.
 
-> Not sure it's worth it yet? Run `2brain graph <repo>` alone first. It's cheap and gives you `GRAPH_REPORT.md` — readable in 30 seconds. Add `wiki` and `arch` once you actually want file-level or system-level detail, not before.
+> Not sure it's worth it yet? Run `2brain graph <repo>` alone first. It's cheap, and on a repo big enough to need it (500+ graph nodes) it gives you `GRAPH_REPORT.md` — readable in 30 seconds. Add `wiki` and `arch` once you actually want file-level or system-level detail, not before.
 
 ## Why each layer matters
 
@@ -23,7 +23,7 @@ Without it, every AI session — including your very next one — burns its own 
 
 `REPO_CONTEXT.md` is that write-down. The graph layer pays the discovery cost once (and near-free after that, since it's incremental), and every session after — Claude Code, Copilot, Cursor, or a human — starts already oriented instead of exploring first and helping second.
 
-It pays off outside AI sessions too: open `GRAPH_REPORT.md` and understand an unfamiliar repo in about 30 seconds instead of clicking through 50 files. That's just as useful the first time you touch a coworker's codebase as it is re-opening your own project after months away — the graph doesn't forget what you did, even if you did.
+It pays off outside AI sessions too: on a large codebase, open `GRAPH_REPORT.md` and understand an unfamiliar repo in about 30 seconds instead of clicking through 50 files. That's just as useful the first time you touch a coworker's codebase as it is re-opening your own project after months away — the graph doesn't forget what you did, even if you did.
 
 ### `wiki`
 Without it, knowing what a specific file does means opening it and reading it — every time, for every file, whether it's you or the AI doing the reading. On a repo of any size that's a lot of repeated re-reading: the same auth helper re-parsed from scratch in five different sessions because nothing remembered what it learned last time.

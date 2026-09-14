@@ -14,5 +14,8 @@
 # the 2026-09-13 run made "2brain Improvement Plan (Master)" the single most
 # connected node in the repo (36 edges), pushed the node count over
 # REPO_GRAPH_CLUSTER_MIN_NODES so GRAPH_REPORT.md was generated, and fed plan
-# filenames into per-file page prompts as if they were dependencies.
+# filenames into per-file page prompts as if they were dependencies. Kept as
+# standing policy — the directory is empty today, and this makes it safe to
+# fill again. Paired with the same exclusion in .2brainignore, which governs
+# what 2brain documents rather than what graphify extracts.
 docs/plans/

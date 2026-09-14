@@ -13,8 +13,9 @@
 [include]
 
 [exclude]
-# Planning prose *about* 2brain, not documentation *of* it. Each file here
-# would otherwise get an llm-wiki page and enter the semantic corpus, where
-# it competes with — and has outranked — the implementation pages for the
-# code the plan describes. See docs/plans/README.md item 11.
+# Planning prose *about* 2brain, not documentation *of* it. Any file here
+# would otherwise get an llm-wiki page and enter the semantic corpus, where it
+# competes with — and has outranked — the implementation pages for the very
+# code the plan describes. Kept as standing policy: the directory is empty
+# today, and this is what makes it safe to fill again.
 docs/plans/**
