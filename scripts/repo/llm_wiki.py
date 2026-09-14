@@ -45,6 +45,14 @@ _NEIGHBOR_HOPS = 2
 _MAX_FILE_CHARS = 12000
 _MAX_NEIGHBORS_IN_PROMPT = 15
 _MAX_OVERVIEW_FILES = 60
+# Files already written in the format a page would be written in. This tier
+# exists to turn code into prose; run against prose it produces a paraphrase
+# that is longer and less accurate than its input — on the 2026-09-13 run every
+# such page came out *larger* than the file it described (docs/ollama.md:
+# 2,208 -> 2,365 bytes). Worse, generated pages were the only route into the
+# semantic index, so the paraphrase was searchable and the document was not.
+# These files stay documented; index.py indexes them as themselves.
+_PROSE_SUFFIXES = (".md", ".markdown", ".rst", ".txt")
 
 _PAGE_PROMPT = """You are writing one page of a living wiki that documents a codebase for both humans and AI assistants.
 
@@ -245,8 +253,19 @@ def expand_neighbors(seeds: set[str], adjacency: dict[str, set[str]], hops: int 
     return expanded
 
 
-def _is_documentable(repo: Path, rel_path: str, scope: Scope | None = None) -> bool:
-    """Only document real repo files that are in scope and not generated artifacts."""
+def is_documentable(repo: Path, rel_path: str, scope: Scope | None = None) -> bool:
+    """Only document real, non-empty repo files in scope and not generated artifacts.
+
+    Emptiness is judged on content, not size on disk: a file holding one newline
+    is as empty as a zero-byte one. Deliberately *only* emptiness — a byte-size
+    floor would also drop small-but-load-bearing files (a constants module, a
+    tiny entry point), and size measures how much prose a model can write about
+    a file, not how much the file matters. A file with no content cannot be
+    described, so skipping it removes an LLM call and a page that would
+    otherwise compete in retrieval saying nothing: the 2026-09-13 run generated
+    877 bytes about an empty __init__.py, and that page then outranked the
+    module that answered the query.
+    """
     if scope is not None and not scope.matches(rel_path):
         return False
     # GENERATED_DIR_PREFIXES is the shared 2brain-generated set; .git/ is added
@@ -258,9 +277,24 @@ def _is_documentable(repo: Path, rel_path: str, scope: Scope | None = None) -> b
         return False
     try:
         with path.open("rb") as handle:
-            return b"\0" not in handle.read(4096)
+            head = handle.read(4096)
+            if b"\0" in head:
+                return False
+            # A short read that is all whitespace can still precede content, so
+            # only a file that ends within this read is safe to call empty.
+            return bool(head.strip()) or path.stat().st_size > len(head)
     except OSError:
         return False
+
+
+def is_prose(rel_path: str) -> bool:
+    """True when a file is its own documentation and needs no generated page.
+
+    Such files stay in `candidates` — they are documented, just not by a page —
+    so they keep counting toward the module tier and reach the semantic index
+    directly. Only page generation skips them.
+    """
+    return rel_path.lower().endswith(_PROSE_SUFFIXES)
 
 
 def _read_truncated(path: Path) -> str:
@@ -339,7 +373,7 @@ def generate(
         )
     graph_files.update(adjacency)
 
-    candidates = sorted(f for f in graph_files if _is_documentable(repo, f, scope))
+    candidates = sorted(f for f in graph_files if is_documentable(repo, f, scope))
     if not candidates:
         if scope is not None and not scope.is_empty:
             raise ValueError(
@@ -348,11 +382,16 @@ def generate(
             )
         raise ValueError("no documentable files found in the dependency graph")
 
+    # Prose files are documented as themselves: they stay in `candidates` (so the
+    # module tier still counts them and index.py still indexes them) but never
+    # become a page, so they are subtracted here rather than above.
+    page_candidates = [f for f in candidates if not is_prose(f)]
+
     if force_all or changed_files is None:
-        targets = set(candidates)
+        targets = set(page_candidates)
     else:
         seeds = changed_files & set(candidates)
-        targets = expand_neighbors(seeds, adjacency) & set(candidates)
+        targets = expand_neighbors(seeds, adjacency) & set(page_candidates)
 
     cache = _load_cache(repo_path)
     plan: list[tuple[str, str]] = []  # (rel_path, content_hash)
@@ -363,7 +402,9 @@ def generate(
             continue
         plan.append((rel_path, content_hash))
 
-    valid_pages = {page_path_for(f) for f in candidates}
+    # Built from page_candidates, so a file that used to get a page and no longer
+    # does (prose, or newly emptied) has its stale page pruned below.
+    valid_pages = {page_path_for(f) for f in page_candidates}
 
     if dry_run:
         for rel_path, _ in plan:
@@ -398,7 +439,7 @@ def generate(
         written.append(page_rel)
         progress.step(rel_path)
 
-    for stale in set(cache) - set(candidates):
+    for stale in set(cache) - set(page_candidates):
         cache.pop(stale, None)
     removed = _prune_stale_pages(repo_path, valid_pages)
     for name in removed:
@@ -427,14 +468,24 @@ def generate(
 
 
 def read_pages(repo_path: str, candidates: list[str]) -> dict[str, str]:
-    """Read the generated page for each candidate file, keyed by source path.
+    """Read what documents each candidate file, keyed by source path.
 
     The module tier summarises these instead of re-reading source, which is what
-    keeps it ~25 LLM calls rather than one per file.
+    keeps it ~25 LLM calls rather than one per file. Prose files have no
+    generated page, so they contribute themselves — already the shape this
+    wants, and one paraphrase closer to what the author actually wrote.
+    Truncated to the same budget a page prompt uses, so a long README cannot
+    crowd the rest of a module out of the prompt.
     """
+    repo = Path(repo_path)
     out_dir = llm_wiki_dir(repo_path)
     pages: dict[str, str] = {}
     for rel_path in candidates:
+        source = repo / rel_path
+        if is_prose(rel_path):
+            if source.is_file():
+                pages[rel_path] = _read_truncated(source)
+            continue
         page = out_dir / page_path_for(rel_path)
         if page.is_file():
             pages[rel_path] = page.read_text(encoding="utf-8", errors="replace")

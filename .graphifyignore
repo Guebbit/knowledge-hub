@@ -1,0 +1,18 @@
+# 2brain:start — regenerate with: 2brain <repo-path>
+# .graphifyignore — graphify's scan-exclusion list: gitignore syntax, one
+# pattern per line, read alongside .gitignore to decide which files get
+# extracted into the code graph.
+#
+# The directories below hold 2brain's own generated documentation. They are
+# not gitignored (they are committed on purpose), so without this file
+# graphify would extract generated prose back into the next graph.
+.2brain/
+# 2brain:end
+
+# --- hand-maintained (outside the 2brain block, preserved across runs) ---
+# Planning prose is not topology. graphify extracts these as concept nodes:
+# the 2026-09-13 run made "2brain Improvement Plan (Master)" the single most
+# connected node in the repo (36 edges), pushed the node count over
+# REPO_GRAPH_CLUSTER_MIN_NODES so GRAPH_REPORT.md was generated, and fed plan
+# filenames into per-file page prompts as if they were dependencies.
+docs/plans/

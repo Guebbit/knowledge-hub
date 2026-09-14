@@ -12,21 +12,17 @@ import json
 import math
 import re
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
+from repo import llm_wiki as repo_llm_wiki
 from repo import memory as repo_memory
+from repo import scope as repo_scope
 from shared import config
 from shared.utils import now_iso
 
 _OUT = Path(config.OUT_DIR)
 _INDEX_SUBPATH = _OUT / "repo-index.json"
-_GRAPHIFY_OUT_DIR = Path(config.GRAPHIFY_OUT)
-_GRAPH_REPORT_PATH = _GRAPHIFY_OUT_DIR / "GRAPH_REPORT.md"
-# GRAPH_REPORT.md is graphify's own product, so it lives in the nested graphify
-# output dir. It is NOT required: repo.py gates it on graph size and skips it
-# outright for small graphs, so its absence is a normal outcome, not a broken
-# pipeline (see _ALLOWLISTED_ARTIFACT_FILES below for how it's still indexed
-# on the runs where it does exist).
 _REQUIRED_ARTIFACTS = (
     _OUT / "EXECUTION.md",
     _OUT / "REPO_MEMORY.md",
@@ -38,8 +34,19 @@ _REQUIRED_ARTIFACTS = (
 # exactly the terms that should discriminate a query. A new artifact tier
 # must be added here explicitly rather than silently joining by virtue of
 # living under OUT_DIR.
+#
+# GRAPH_REPORT.md is deliberately NOT here either, for the same reason in a
+# worse form. It is a concatenation of every community label, identifier and
+# truncated docstring fragment in the repository, so it overlaps the vocabulary
+# of any question about the repo — maximum recall, near-zero precision. Each
+# chunk is an index of names, not an explanation, so it ranks high and answers
+# nothing: asked "how do I run the test suite" it returned a cluster label plus
+# three docstrings cut mid-sentence, while EXECUTION.md — which contains the
+# literal line `make test` — did not make the top ten. Its actual job is
+# first-contact orientation, which REPO_CONTEXT.md routes to by telling a reader
+# to open the file. That is a read-the-file job and is unaffected; the report is
+# still generated, committed and linked, just not retrievable in fragments.
 _ALLOWLISTED_ARTIFACT_FILES = (
-    _GRAPH_REPORT_PATH,
     _OUT / "EXECUTION.md",
     _OUT / "REPO_MEMORY.md",
     _OUT / "REPO_CONTEXT.md",
@@ -50,11 +57,26 @@ _ALLOWLISTED_MD_DIRS = (
 )
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]{2,}")
 _MAX_CHUNK_CHARS = 1200
+# Below this, a chunk is a fragment rather than an answer — a markdown heading,
+# a one-line note — and scores on too few terms to be trusted. See
+# _chunk_plain_text for why splitting on blank lines alone produces them.
+_MIN_CHUNK_CHARS = 120
 _QUERY_EXPANSION_TERMS = 8
 _QUERY_EXPANSION_WEIGHT = 0.35
 _BASE_SCORE_WEIGHT = 0.65
 _EXPANDED_SCORE_WEIGHT = 0.35
 _EXPANSION_SEED_TERMS_PER_CHUNK = 25
+# A long artifact chunks into dozens of records that all answer to the same
+# source. Without a cap one document can take most of the result set — and,
+# worse, most of the expansion seed, which then injects its vocabulary into the
+# query and makes it win the second round harder. GRAPH_REPORT.md (an index of
+# every identifier in the repo, so it matches everything) took both of the top
+# two slots on a query whose answer was in a source file it never mentions.
+#
+# One per source, not two: a caller asking a question wants to know which files
+# to open, so a second excerpt of a page already listed spends a slot that
+# could have named a different file. The best chunk still decides its rank.
+_MAX_CHUNKS_PER_SOURCE = 1
 
 
 def _index_file(repo: Path) -> Path:
@@ -84,14 +106,24 @@ def _load_text(path: Path) -> str:
 
 
 def _chunk_plain_text(text: str) -> list[str]:
-    """Split text into paragraph-like chunks bounded by max character size."""
+    """Split text into paragraph-like chunks bounded by max character size.
+
+    A blank line ends a chunk only once there is enough text to be an answer.
+    Markdown puts a blank line after every heading, so splitting on blank lines
+    alone turns each heading into its own chunk — and a four-token chunk that
+    matches two query terms outscores a full paragraph that matches eight,
+    because cosine similarity normalizes away the difference in substance. The
+    query "how does the wiki cache decide to skip a page" was answered with
+    "## What 2brain does". Carrying a short block forward instead attaches the
+    heading to the section it introduces, which is where it belongs anyway.
+    """
     chunks: list[str] = []
     block: list[str] = []
     current_len = 0
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
-            if block:
+            if block and current_len >= _MIN_CHUNK_CHARS:
                 candidate = "\n".join(block).strip()
                 if candidate:
                     chunks.append(candidate)
@@ -113,7 +145,12 @@ def _chunk_plain_text(text: str) -> list[str]:
     if block:
         candidate = "\n".join(block).strip()
         if candidate:
-            chunks.append(candidate)
+            # A trailing scrap (a closing heading, a one-line footer) joins the
+            # previous chunk rather than standing as a chunk of its own.
+            if len(candidate) < _MIN_CHUNK_CHARS and chunks:
+                chunks[-1] = f"{chunks[-1]}\n{candidate}"
+            else:
+                chunks.append(candidate)
     return chunks
 
 
@@ -135,17 +172,66 @@ def _artifact_files(repo: Path) -> list[Path]:
     for rel_dir in _ALLOWLISTED_MD_DIRS:
         directory = repo / rel_dir
         if directory.is_dir():
-            files.extend(p for p in sorted(directory.rglob("*.md")) if p.is_file())
+            files.extend(
+                p for p in sorted(directory.rglob("*.md")) if p.is_file() and not _is_stale_prose_page(repo, p)
+            )
     return files
+
+
+def _is_stale_prose_page(repo: Path, page: Path) -> bool:
+    """True for a leftover llm-wiki page describing a file that is now indexed directly.
+
+    llm_wiki no longer generates pages for prose and prunes the old ones, but
+    pruning only happens on a wiki run — and the graph layer rebuilds the index
+    before the wiki layer runs. Without this, that window indexes a document and
+    its obsolete summary at the same time, which is the duplication the corpus
+    allowlist exists to prevent. Page paths are source paths plus '.md', so the
+    source is recoverable by stripping one suffix.
+    """
+    llm_wiki_root = repo / _OUT / "llm-wiki"
+    if not page.is_relative_to(llm_wiki_root):
+        return False
+    source_rel = str(page.relative_to(llm_wiki_root).with_suffix(""))
+    return repo_llm_wiki.is_prose(source_rel)
+
+
+def _source_prose_files(repo: Path) -> list[Path]:
+    """Return in-scope prose sources (README.md, docs/**.md, ...) to index directly.
+
+    These have no generated page — llm_wiki skips them, because summarising
+    prose produces something longer and less accurate than its input. They are
+    indexed as themselves instead, which is both cheaper and more faithful, and
+    makes `2brain query` return a path the caller can actually open rather than
+    a `<path>.md` page they have to translate back.
+
+    The candidate set comes from graph.json rather than a filesystem walk, so it
+    inherits exactly the filtering llm_wiki uses — graphify's .gitignore and
+    .graphifyignore handling, plus the scope file — instead of re-deriving it
+    here and drifting. A missing graph yields an empty list: `2brain reindex`
+    before any graph run then indexes artifacts only, rather than failing.
+    """
+    try:
+        graph_files, adjacency = repo_llm_wiki.load_graph(str(repo))
+    except FileNotFoundError:
+        return []
+    graph_files.update(adjacency)
+
+    scope = repo_scope.load(str(repo))
+    return [
+        repo / rel
+        for rel in sorted(graph_files)
+        if repo_llm_wiki.is_prose(rel) and repo_llm_wiki.is_documentable(repo, rel, scope)
+    ]
 
 
 def _build_chunk_records(
     repo: Path,
     *,
     artifact_files: list[Path],
+    prose_files: list[Path],
     runtime_metadata: dict[str, str],
 ) -> list[dict[str, str]]:
-    """Create indexable chunk records from runtime metadata, artifacts, and memory."""
+    """Create indexable chunks from runtime metadata, artifacts, prose sources and memory."""
     chunks: list[dict[str, str]] = []
 
     runtime_lines = [f"{k}: {v}" for k, v in sorted(runtime_metadata.items()) if v]
@@ -168,6 +254,21 @@ def _build_chunk_records(
                 {
                     "id": f"artifact:{rel}:{idx}",
                     "kind": "artifact",
+                    "source": rel,
+                    "text": chunk_text,
+                }
+            )
+
+    for path in prose_files:
+        rel = str(path.relative_to(repo))
+        for idx, chunk_text in enumerate(_chunk_plain_text(_load_text(path))):
+            chunks.append(
+                {
+                    # kind "source" rather than "artifact": this is the author's
+                    # own file, not something 2brain generated, and `source` is a
+                    # path the caller can open directly.
+                    "id": f"source:{rel}:{idx}",
+                    "kind": "source",
                     "source": rel,
                     "text": chunk_text,
                 }
@@ -268,7 +369,13 @@ def build_index(repo_path: str, *, runtime_metadata: dict[str, str]) -> dict[str
     if not artifacts:
         raise ValueError(f"no indexable artifacts found in {config.OUT_DIR}/")
 
-    chunks = _build_chunk_records(repo, artifact_files=artifacts, runtime_metadata=runtime_metadata)
+    prose = _source_prose_files(repo)
+    chunks = _build_chunk_records(
+        repo,
+        artifact_files=artifacts,
+        prose_files=prose,
+        runtime_metadata=runtime_metadata,
+    )
     if not chunks:
         raise ValueError("no index chunks were produced")
 
@@ -295,7 +402,9 @@ def build_index(repo_path: str, *, runtime_metadata: dict[str, str]) -> dict[str
     if not index_chunks:
         raise ValueError("all chunks were empty after tokenization")
 
-    artifact_digest = _artifact_digest(repo, artifacts)
+    # Prose sources are hashed alongside the artifacts: they are part of the
+    # corpus now, so editing a README must move the index revision.
+    artifact_digest = _artifact_digest(repo, artifacts + prose)
     runtime_digest = _hash_text(json.dumps(runtime_metadata, sort_keys=True))
     memory_digest = repo_memory.memory_digest(repo_path)
     revision = _hash_text(f"{artifact_digest}:{runtime_digest}:{memory_digest}")
@@ -308,7 +417,7 @@ def build_index(repo_path: str, *, runtime_metadata: dict[str, str]) -> dict[str
         "runtime_digest": runtime_digest,
         "memory_digest": memory_digest,
         "memory_count": _memory_count(repo_path),
-        "artifact_files": [str(path.relative_to(repo)) for path in artifacts],
+        "artifact_files": [str(path.relative_to(repo)) for path in artifacts + prose],
         "runtime_metadata": runtime_metadata,
         "idf": idf,
         "chunks": index_chunks,
@@ -321,7 +430,7 @@ def build_index(repo_path: str, *, runtime_metadata: dict[str, str]) -> dict[str
     return {
         "revision": revision,
         "chunk_count": len(index_chunks),
-        "artifact_count": len(artifacts),
+        "artifact_count": len(artifacts) + len(prose),
         "memory_count": payload["memory_count"],
         "index_path": str(output),
         "artifact_digest": artifact_digest,
@@ -341,6 +450,33 @@ def load_index(repo_path: str) -> dict[str, object]:
     if not isinstance(data, dict):
         raise ValueError(f"invalid index structure: {path}")
     return data
+
+
+def _cap_per_source(
+    items: list[dict[str, object]],
+    *,
+    limit: int,
+    source_of: Callable[[dict[str, object]], str] = lambda item: str(item.get("source") or ""),
+) -> list[dict[str, object]]:
+    """Take the best `limit` items, at most _MAX_CHUNKS_PER_SOURCE from each source.
+
+    `items` must already be sorted best-first, since the first chunk kept for a
+    source is the one that fixes its rank. Returns fewer than `limit` when the
+    candidates do not hold that many distinct sources — deliberately: padding
+    the tail with more chunks of a source already listed is the behaviour this
+    exists to prevent.
+    """
+    seen: Counter[str] = Counter()
+    kept: list[dict[str, object]] = []
+    for item in items:
+        source = source_of(item)
+        if seen[source] >= _MAX_CHUNKS_PER_SOURCE:
+            continue
+        seen[source] += 1
+        kept.append(item)
+        if len(kept) >= limit:
+            break
+    return kept
 
 
 def semantic_query(repo_path: str, *, text: str, top_k: int = 5) -> list[dict[str, object]]:
@@ -377,7 +513,11 @@ def semantic_query(repo_path: str, *, text: str, top_k: int = 5) -> list[dict[st
         return []
 
     scored.sort(key=lambda item: float(item["base_score"]), reverse=True)
-    top_seed = scored[: min(len(scored), max(top_k * 2, 6))]
+    top_seed = _cap_per_source(
+        scored,
+        limit=min(len(scored), max(top_k * 2, 6)),
+        source_of=lambda item: str(item["chunk"].get("source") or ""),
+    )
 
     expansion: Counter[str] = Counter()
     query_set = set(query_tokens)
@@ -414,4 +554,4 @@ def semantic_query(repo_path: str, *, text: str, top_k: int = 5) -> list[dict[st
         )
 
     results.sort(key=lambda item: float(item["score"]), reverse=True)
-    return results[: max(1, top_k)]
+    return _cap_per_source(results, limit=max(1, top_k))

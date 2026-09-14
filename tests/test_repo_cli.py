@@ -51,3 +51,50 @@ class TestGraphReportIsOptional:
 
     def test_execution_md_is_still_required(self, repo_cli):
         assert any(str(p).endswith("EXECUTION.md") for p in repo_cli._REQUIRED_PIPELINE_ARTIFACTS)
+
+
+class TestStateLayerRefresh:
+    """The graph baseline may only advance when graphify runs, or --check reports
+    a stale graph as fresh. But the wiki and arch layers rebuild the *index*, and
+    leaving the graph layer's record in place made .2brain-state.json describe an
+    index that no longer existed (72 chunks recorded against 585 on disk).
+    """
+
+    @pytest.fixture
+    def state_repo(self, repo_cli, tmp_path, monkeypatch):
+        monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _: True)
+        state = tmp_path / ".2brain" / ".2brain-state.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text(json.dumps({
+            "generated_at": "2026-09-13T14:11:42+00:00",
+            "head": "0bafcf31",
+            "threshold": 5,
+            "layers": {"index": {"chunk_count": 72}},
+        }))
+        return state
+
+    def test_head_stays_pinned_while_layers_refresh(self, repo_cli, tmp_path, state_repo):
+        repo_cli._refresh_state_layers(str(tmp_path), pipeline={"index": {"chunk_count": 585}})
+
+        written = json.loads(state_repo.read_text())
+        assert written["head"] == "0bafcf31", "the graph baseline must not move"
+        assert written["layers"]["index"]["chunk_count"] == 585
+
+    def test_missing_state_is_not_invented(self, repo_cli, tmp_path, monkeypatch):
+        monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _: True)
+
+        repo_cli._refresh_state_layers(str(tmp_path), pipeline={"index": {}})
+
+        assert not (tmp_path / ".2brain" / ".2brain-state.json").exists(), (
+            "writing a baseline here would silently move it to HEAD"
+        )
+
+    def test_corrupt_state_is_left_alone(self, repo_cli, tmp_path, monkeypatch):
+        monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _: True)
+        state = tmp_path / ".2brain" / ".2brain-state.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text("{not json")
+
+        repo_cli._refresh_state_layers(str(tmp_path), pipeline={"index": {}})
+
+        assert state.read_text() == "{not json"

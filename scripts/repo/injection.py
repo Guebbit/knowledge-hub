@@ -296,20 +296,35 @@ def _gitattributes_block() -> str:
 def _gitignore_block() -> str:
     """Managed .gitignore block excluding regeneration-only caches and duplicates.
 
-    Deliberately narrow: llm-wiki/, wiki/, arch/, EXECUTION.md, REPO_MEMORY.md,
-    REPO_CONTEXT.md and repo-index.json are committed on purpose (regenerating
-    them costs real LLM time/tokens, or needs 2brain/graphify installed — a
-    teammate without that tooling or a capable machine should still be able to
-    read and query them). Everything listed here only speeds up a *future*
-    regeneration and has zero value to a reader:
+    Deliberately narrow: llm-wiki/, wiki/, arch/, EXECUTION.md, REPO_MEMORY.md
+    and REPO_CONTEXT.md are committed on purpose (regenerating them costs real
+    LLM time/tokens, or needs 2brain/graphify installed — a teammate without
+    that tooling or a capable machine should still be able to read them).
+    Everything listed here either only speeds up a *future* regeneration and has
+    zero value to a reader, or is cheap enough to rebuild that committing it
+    costs more than it saves:
       - graphify's raw graph.json/manifest.json/.graphify_* dumps — structural
         data, not prose (see index.py's _artifact_files for why these are also
         excluded from the semantic index, not just git)
       - graphify's own incremental AST/semantic cache
       - graphify's dated snapshot directories, which duplicate its live output
+      - graphify's interactive graph.html viewer: ~750 KB of vis-network markup
+        that no assistant can read and a browser can only render with network
+        access (it loads the library from a CDN). A human who wants to browse
+        the structure visually already has the module tier in Obsidian, whose
+        graph view works offline and at a granularity worth looking at.
       - the wiki/module incremental content-hash caches
       - CodeBoarding's native working dir (.codeboarding/): its committed,
         canonical copy already lives in <OUT_DIR>/arch/
+      - repo-index.json — the one artifact that is derived rather than written.
+        It is rewritten whole on every run (IDF is global, so one new file
+        shifts every weight and it never delta-compresses) and it grows with the
+        corpus: ~1 MB here, but ~60 MB at 3 000 files and ~200 MB at 10 000, a
+        fresh blob per run, permanently. The usual argument for committing —
+        that rebuilding costs LLM time — does not apply: `2brain reindex` makes
+        no model calls at all, just stdlib over the artifacts that *are*
+        committed, so a teammate rebuilds it in seconds with no GPU or API key.
+        `2brain query` already says so when it is missing (repo.py:620).
     """
     graphify_out = config.GRAPHIFY_OUT
     return "\n".join([
@@ -319,9 +334,11 @@ def _gitignore_block() -> str:
         f"{graphify_out}/manifest.json",
         f"{graphify_out}/.graphify_analysis.json",
         f"{graphify_out}/.graphify_labels.json*",
+        f"{graphify_out}/graph.html",
         f"{graphify_out}/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/",
         f"{_OUT}/llm-wiki/.llm-wiki-cache.json",
         f"{_OUT}/wiki/.wiki-cache.json",
+        f"{_OUT}/repo-index.json",
         ".codeboarding/",
         _HASH_MARKER_END,
     ])

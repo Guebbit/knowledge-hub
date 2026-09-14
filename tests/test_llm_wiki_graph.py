@@ -119,3 +119,81 @@ class TestPagePathMapping:
         """`_`-flattening mapped all three of these onto scripts_repo_wiki_py.md."""
         collided = ("scripts/repo/wiki.py", "scripts/repo_wiki.py", "scripts/repo/wiki_py")
         assert len({llm_wiki.page_path_for(p) for p in collided}) == len(collided)
+
+
+class TestEmptyFilesAreNotDocumented:
+    """An empty file has nothing to describe, but the model will describe it
+    anyway: the 2026-09-13 run spent an LLM call producing 877 bytes about a
+    zero-byte __init__.py, and the resulting page — matching on boilerplate
+    words like page/file/wiki/repo — then outranked the module that held the
+    actual answer.
+    """
+
+    def test_zero_byte_file_is_skipped(self, tmp_path):
+        (tmp_path / "__init__.py").write_bytes(b"")
+
+        assert not llm_wiki.is_documentable(tmp_path, "__init__.py")
+
+    def test_whitespace_only_file_is_skipped(self, tmp_path):
+        (tmp_path / "blank.py").write_text("\n\n   \n\t\n")
+
+        assert not llm_wiki.is_documentable(tmp_path, "blank.py")
+
+    def test_a_single_line_of_content_is_enough(self, tmp_path):
+        """Deliberately not a size floor: small files can still be load-bearing."""
+        (tmp_path / "constants.py").write_text("TIMEOUT = 30\n")
+
+        assert llm_wiki.is_documentable(tmp_path, "constants.py")
+
+    def test_long_file_starting_with_blank_lines_is_kept(self, tmp_path):
+        """The emptiness check reads a 4 KB head; content after it still counts."""
+        (tmp_path / "padded.py").write_text("\n" * 5000 + "VALUE = 1\n")
+
+        assert llm_wiki.is_documentable(tmp_path, "padded.py")
+
+    def test_binary_files_are_still_rejected(self, tmp_path):
+        (tmp_path / "blob.bin").write_bytes(b"\x00\x01\x02")
+
+        assert not llm_wiki.is_documentable(tmp_path, "blob.bin")
+
+
+class TestProseIsNotSummarized:
+    """This tier turns code into prose. Pointed at prose it produced a paraphrase
+    longer than its input (docs/ollama.md: 2,208 -> 2,365 bytes) that then
+    displaced the original from retrieval, because generated pages were the only
+    route into the semantic index. Prose files stay documented — index.py indexes
+    them directly — so they must remain candidates while getting no page.
+    """
+
+    def test_markdown_and_friends_are_prose(self):
+        assert llm_wiki.is_prose("README.md")
+        assert llm_wiki.is_prose("docs/GUIDE.MD"), "suffix match is case-insensitive"
+        assert llm_wiki.is_prose("notes.txt")
+        assert llm_wiki.is_prose("docs/api.rst")
+
+    def test_code_is_not_prose(self):
+        assert not llm_wiki.is_prose("scripts/repo.py")
+        assert not llm_wiki.is_prose("docker-compose.yml")
+        assert not llm_wiki.is_prose("src/markdown.ts"), "'markdown' in the name is not a suffix"
+
+    def test_prose_stays_documentable(self, repo):
+        """It must stay in candidates: the module tier counts it and index.py indexes it."""
+        (Path(repo) / "README.md").write_text("# Title\n\nreal content\n")
+
+        assert llm_wiki.is_documentable(Path(repo), "README.md")
+
+    def test_read_pages_returns_the_source_for_prose(self, repo):
+        (Path(repo) / "README.md").write_text("# Title\n\nthe author's own words\n")
+
+        pages = llm_wiki.read_pages(repo, ["README.md"])
+
+        assert "the author's own words" in pages["README.md"]
+
+    def test_read_pages_still_reads_generated_pages_for_code(self, repo):
+        page = llm_wiki.llm_wiki_dir(repo) / "src" / "a.py.md"
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text("# src/a.py\n\ngenerated summary\n")
+
+        pages = llm_wiki.read_pages(repo, ["src/a.py"])
+
+        assert "generated summary" in pages["src/a.py"]

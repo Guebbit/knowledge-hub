@@ -100,8 +100,9 @@ _REQUIRED_PIPELINE_ARTIFACTS = (
 # graphify's `cluster-only` pass (names communities, writes GRAPH_REPORT.md) is
 # only worth its cost above this many graph nodes: below it, "communities" are
 # partition noise over a graph small enough that a reader could just read all
-# the files, per docs/plans/graph-report-gating.md. graph.json's top-level
-# `nodes` list is what graphify itself reports as node count.
+# the files — this repo measured 35 "communities" over 724 nodes at cohesion
+# 0.06-0.09, i.e. no real clusters at all. graph.json's top-level `nodes` list
+# is what graphify itself reports as node count.
 _GRAPH_CLUSTER_MIN_NODES = int(os.getenv("REPO_GRAPH_CLUSTER_MIN_NODES", "500"))
 _QUERY_EXCERPT_LENGTH = 320
 _AI_TARGET_PROMPT = (
@@ -328,12 +329,21 @@ def _resolve_threshold() -> int:
         return 5
 
 
-def _write_state(repo_path: str, *, pipeline: dict[str, object]) -> None:
+def _write_state(repo_path: str, *, pipeline: dict[str, object], head: str | None = None) -> None:
+    """Record the run's layer results, pinning `head` to the graph baseline.
+
+    `head` is the *graph* baseline and may only advance when graphify itself
+    runs — otherwise --check reports a stale graph as fresh. The rest of the
+    payload describes the layers as they were last built, which is a different
+    question: the wiki and arch layers rebuild the index without touching the
+    graph, so passing the prior head lets them refresh their own record without
+    moving the baseline.
+    """
     if not _in_git_repo(repo_path):
         print("Stale    : skipped state write (not a git repository)")
         return
 
-    head = _resolve_head(repo_path)
+    head = head or _resolve_head(repo_path)
     if not head:
         print("Stale    : skipped state write (cannot resolve HEAD)")
         return
@@ -359,6 +369,30 @@ def _read_state(repo_path: str) -> dict[str, object] | None:
         return json.loads(state_file.read_text())
     except json.JSONDecodeError:
         die(f"invalid state file: {state_file}")
+
+
+def _refresh_state_layers(repo_path: str, *, pipeline: dict[str, object]) -> None:
+    """Update the recorded layer results without advancing the graph baseline.
+
+    For layers that rebuild the index but not the graph (wiki, arch). Silently
+    does nothing when there is no prior state to pin against — a run that never
+    got a baseline has nothing to preserve, and inventing one here would move
+    the baseline to HEAD, which is exactly what must not happen.
+
+    Reads the state file directly rather than via _read_state(), whose "run
+    '2brain graph' first" advice is aimed at _check() and would be misleading
+    noise in the middle of a wiki run that has already done its work.
+    """
+    state_file = _repo_state_file(repo_path)
+    if not state_file.exists():
+        return
+    try:
+        prior = json.loads(state_file.read_text())
+    except json.JSONDecodeError:
+        return
+    pinned = str(prior.get("head") or "") if isinstance(prior, dict) else ""
+    if pinned:
+        _write_state(repo_path, pipeline=pipeline, head=pinned)
 
 
 def _is_generated_path(path: str) -> bool:
@@ -772,9 +806,12 @@ def _wiki(
         return 0
 
     # Fold wiki pages into the semantic index and canonical context.
-    # State is intentionally NOT rewritten: the graph baseline must only move
-    # when graphify itself runs, otherwise --check would report a stale graph as fresh.
-    _build_layers(repo_path, provider=provider, model=model, mode="wiki", ai_target=ai_target)
+    # The graph baseline must only move when graphify itself runs, otherwise
+    # --check would report a stale graph as fresh — so the head stays pinned.
+    # The layer records do get refreshed: this call just rebuilt the index, and
+    # leaving the graph layer's copy in place makes state lie about it.
+    layers = _build_layers(repo_path, provider=provider, model=model, mode="wiki", ai_target=ai_target)
+    _refresh_state_layers(repo_path, pipeline=layers)
 
     if mirror_vault:
         # Per-file pages are machine-tier and deliberately stay out of the vault;
@@ -839,10 +876,9 @@ def _arch(
         return 0
 
     # Fold the architecture pages into the semantic index and canonical context.
-    # State is intentionally NOT rewritten: the graph baseline must only move when
-    # graphify itself runs, otherwise --check would report a stale graph as fresh
-    # (same rule as the wiki layer).
-    _build_layers(repo_path, provider=provider, model=model, mode="arch", ai_target=ai_target)
+    # Head stays pinned, layer records are refreshed — same rule as the wiki layer.
+    layers = _build_layers(repo_path, provider=provider, model=model, mode="arch", ai_target=ai_target)
+    _refresh_state_layers(repo_path, pipeline=layers)
 
     if mirror_vault:
         _mirror_to_vault(repo_arch.mirror_to_vault, repo_path, label="Arch", explicit=mirror_explicit)
