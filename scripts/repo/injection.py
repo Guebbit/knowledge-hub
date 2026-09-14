@@ -75,9 +75,9 @@ def _probe_artifacts(repo: Path) -> list[tuple[str, str]]:
             "per-file machine-oriented pages, one per source file (page path = source path + `.md`)",
         ))
 
-    wiki_dir = repo / _OUT / "wiki"
-    if wiki_dir.is_dir() and any(wiki_dir.glob("*.md")):
-        found.append((f"{_OUT}/wiki/", "human-oriented module notes, mirrored into Obsidian"))
+    modules_dir = repo / _OUT / "modules"
+    if modules_dir.is_dir() and any(modules_dir.glob("*.md")):
+        found.append((f"{_OUT}/modules/", "human-oriented module notes, mirrored into Obsidian"))
 
     arch_dir = repo / _OUT / "arch"
     if arch_dir.is_dir() and any(arch_dir.glob("*.md")):
@@ -296,7 +296,7 @@ def _gitattributes_block() -> str:
 def _gitignore_block() -> str:
     """Managed .gitignore block excluding regeneration-only caches and duplicates.
 
-    Deliberately narrow: llm-wiki/, wiki/, arch/, EXECUTION.md, REPO_MEMORY.md
+    Deliberately narrow: llm-wiki/, modules/, arch/, EXECUTION.md, REPO_MEMORY.md
     and REPO_CONTEXT.md are committed on purpose (regenerating them costs real
     LLM time/tokens, or needs 2brain/graphify installed — a teammate without
     that tooling or a capable machine should still be able to read them).
@@ -313,7 +313,8 @@ def _gitignore_block() -> str:
         access (it loads the library from a CDN). A human who wants to browse
         the structure visually already has the module tier in Obsidian, whose
         graph view works offline and at a granularity worth looking at.
-      - the wiki/module incremental content-hash caches
+      - the module tier's incremental content-hash cache (the llm-wiki tier
+        keeps its hashes in each page's own frontmatter, so it has no sidecar)
       - CodeBoarding's native working dir (.codeboarding/): its committed,
         canonical copy already lives in <OUT_DIR>/arch/
       - repo-index.json — the one artifact that is derived rather than written.
@@ -336,8 +337,7 @@ def _gitignore_block() -> str:
         f"{graphify_out}/.graphify_labels.json*",
         f"{graphify_out}/graph.html",
         f"{graphify_out}/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/",
-        f"{_OUT}/llm-wiki/.llm-wiki-cache.json",
-        f"{_OUT}/wiki/.wiki-cache.json",
+        f"{_OUT}/modules/.modules-cache.json",
         f"{_OUT}/repo-index.json",
         ".codeboarding/",
         _HASH_MARKER_END,

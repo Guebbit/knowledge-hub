@@ -28,7 +28,7 @@ A bare `2brain <repo>` runs all three layers in order. Its graph step is
 incremental whenever graphify output already exists, so re-running is cheap;
 --force-all rebuilds every layer from scratch.
 
-The wiki step also builds the module tier (repo/wiki.py): one note per
+The wiki step also builds the module tier (repo/modules.py): one note per
 meaningful directory, written from the per-file pages. That tier and the arch
 pages are mirrored into vault/Projects/<repo-name>/Generated/ whenever a vault is
 found at VAULT_PATH; per-file llm-wiki pages are machine-tier and stay in the repo.
@@ -55,8 +55,8 @@ from repo import index as repo_index
 from repo import injection as repo_injection
 from repo import llm_wiki as repo_llm_wiki
 from repo import memory as repo_memory
+from repo import modules as repo_modules
 from repo import scope as repo_scope
-from repo import wiki as repo_wiki
 from repo.execution import generate as execution_generate
 from repo.injection import AI_TARGETS
 from repo.vault import repo_display_name, vault_available
@@ -85,6 +85,9 @@ _BACKEND_MAP = {
 _OUT = Path(config.OUT_DIR)
 _GRAPHIFY_OUT = Path(config.GRAPHIFY_OUT)
 _STATE_FILE_SUBPATH = _OUT / config.STATE_FILE
+
+# Set to 0 to stop the end-of-run prompt in _offer_hook from ever asking.
+_HOOK_PROMPT_ENV = "REPO_HOOK_PROMPT"
 # git pathspecs that exclude 2brain's own generated output from staleness diffs,
 # derived from the shared generated-path definitions in config.
 _STALE_EXCLUDES = [
@@ -503,6 +506,64 @@ fi
     return 0
 
 
+def _hook_is_installed(repo_path: str) -> bool:
+    """True when the post-commit hook in place was written by 2brain."""
+    hook_path = Path(repo_path) / ".git" / "hooks" / "post-commit"
+    if not hook_path.is_file():
+        return False
+    try:
+        return "2brain" in hook_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
+def _offer_hook(repo_path: str) -> None:
+    """Ask once, at the end of a full run, whether to install the staleness hook.
+
+    Everything needed to catch drift already existed before this prompt:
+    .2brain-state.json records the generating commit, `2brain check` compares it,
+    `2brain hook` automates the comparison. All of it required someone to think of
+    looking. Opt-in features that depend on remembering do not get adopted — the
+    review that prompted this found the artifacts five commits stale precisely
+    because nothing ever asked.
+
+    This matters more as the artifacts get better: the more an assistant is told to
+    trust .2brain/, the more damage a stale .2brain/ does. The end of a run is the
+    one moment the state file is guaranteed fresh, so it is the honest moment to
+    ask. Asked once per repo — an installed hook, a declined prompt with
+    REPO_HOOK_PROMPT=0, or a foreign post-commit hook all silence it.
+    """
+    if not _in_git_repo(repo_path) or _hook_is_installed(repo_path):
+        return
+    if (os.getenv(_HOOK_PROMPT_ENV) or "").strip() == "0":
+        return
+
+    post_commit = Path(repo_path) / ".git" / "hooks" / "post-commit"
+    if post_commit.exists():
+        # Someone else's hook: _install_hook overwrites unconditionally, so this
+        # path must never auto-install. Say it exists and leave the choice out.
+        print(f"Hook     : post-commit hook already present ({post_commit}) — left untouched")
+        print("Hook     : '2brain hook .' would replace it with the staleness warning")
+        return
+
+    if not sys.stdin.isatty():
+        print("Hook     : install a post-commit staleness warning with '2brain hook .'")
+        return
+
+    print("Hook     : nothing yet warns you when these artifacts fall behind the code.")
+    print("           A post-commit hook checks on every commit and warns past the threshold.")
+    try:
+        answer = input("Install the staleness hook now? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+
+    if answer in ("y", "yes"):
+        _install_hook(repo_path)
+    else:
+        print(f"Hook     : skipped — run '2brain hook .' any time ({_HOOK_PROMPT_ENV}=0 stops the asking)")
+
+
 def _require_pipeline_artifacts(repo_path: str) -> None:
     repo = Path(repo_path)
     for rel in _REQUIRED_PIPELINE_ARTIFACTS:
@@ -789,9 +850,9 @@ def _wiki(
     adjacency = summary.get("adjacency") or {}
     module_summary: dict[str, object] = {}
     if candidates:
-        grouped = repo_wiki.select_modules(candidates)
+        grouped = repo_modules.select_modules(candidates)
         try:
-            module_summary = repo_wiki.generate(
+            module_summary = repo_modules.generate(
                 repo_path,
                 grouped=grouped,
                 adjacency=adjacency,
@@ -820,7 +881,7 @@ def _wiki(
         legacy = repo_llm_wiki.prune_legacy_vault_mirror(repo_path, config.VAULT_PATH)
         if legacy:
             print(f"LLM Wiki : cleared {len(legacy)} legacy per-file page(s) from the vault mirror")
-        _mirror_to_vault(repo_wiki.mirror_to_vault, repo_path, label="Wiki", explicit=mirror_explicit)
+        _mirror_to_vault(repo_modules.mirror_to_vault, repo_path, label="Wiki", explicit=mirror_explicit)
 
     written = summary.get("written") or []
     removed = summary.get("removed") or []
@@ -975,6 +1036,8 @@ def _all(
         mirror_vault=mirror_vault,
         mirror_explicit=mirror_explicit,
     )
+    if returncode == 0:
+        _offer_hook(repo_path)
     _print_summary(f"2brain · {repo_display_name(repo_path)}")
     return returncode
 
@@ -1050,7 +1113,7 @@ def main() -> None:
     remember_parser.add_argument("--preset", metavar="NAME", help="Override REPO_PRESET_GRAPH (e.g. fast, deep)")
     remember_parser.add_argument("--ai-target", choices=AI_TARGETS, help="Generate integration files only for one target: claude, copilot, cursor, or neutral")
 
-    wiki_parser = subparsers.add_parser("wiki", help=f"Generate/update the living wiki ({_OUT}/wiki/) incrementally via LLM")
+    wiki_parser = subparsers.add_parser("wiki", help=f"Generate/update both wiki tiers ({_OUT}/llm-wiki/ per-file + {_OUT}/modules/ per-directory) incrementally via LLM")
     _add_repo_argument(wiki_parser)
     wiki_parser.add_argument("files", nargs="*", metavar="FILE", help="Optional explicit files to regenerate (plus their graph neighbors)")
     wiki_parser.add_argument("--force-all", action="store_true", help="Full rebuild, ignoring cache and baseline")

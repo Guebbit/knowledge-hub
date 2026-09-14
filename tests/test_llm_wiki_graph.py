@@ -197,3 +197,88 @@ class TestProseIsNotSummarized:
         pages = llm_wiki.read_pages(repo, ["src/a.py"])
 
         assert "generated summary" in pages["src/a.py"]
+
+
+class TestFrontmatter:
+    """Pages carry their own provenance. The header is what makes a page
+    self-describing, what replaced the .llm-wiki-cache.json sidecar, and what
+    lets the index return the source path instead of the page path — so both
+    directions of the round-trip are pinned here.
+    """
+
+    def test_round_trip(self):
+        fields = {
+            "source": "scripts/repo/index.py",
+            "sha256": "a" * 64,
+            "generated_at": "2026-09-14T10:00:00Z",
+            "model": "ollama:qwen3:8b",
+        }
+        parsed, body = llm_wiki.split_frontmatter(llm_wiki.render_frontmatter(fields) + "# Page\n")
+        assert parsed == fields
+        assert body == "# Page\n"
+
+    def test_model_value_keeps_its_own_colons(self):
+        """`ollama:qwen3:8b` is a legal value; splitting on every colon truncates it."""
+        text = llm_wiki.render_frontmatter({"source": "a.py", "model": "ollama:qwen3:8b"})
+        assert llm_wiki.split_frontmatter(text)[0]["model"] == "ollama:qwen3:8b"
+
+    def test_empty_fields_are_omitted(self):
+        """OVERVIEW.md documents no single file, so it carries no source/sha256."""
+        text = llm_wiki.render_frontmatter({"generated_at": "2026-09-14T10:00:00Z", "model": "m"})
+        fields, _ = llm_wiki.split_frontmatter(text)
+        assert "source" not in fields
+        assert fields["generated_at"] == "2026-09-14T10:00:00Z"
+
+    def test_page_without_frontmatter_is_returned_whole(self):
+        assert llm_wiki.split_frontmatter("# Page\n\nbody\n") == ({}, "# Page\n\nbody\n")
+
+    def test_body_opening_with_a_horizontal_rule_is_not_frontmatter(self):
+        """A generated body may legally start with `---`. Misreading it as a
+        header would silently swallow real content out of the corpus."""
+        text = "---\n\nSome prose that is not key: value shaped at all.\n\n---\n"
+        assert llm_wiki.split_frontmatter(text) == ({}, text)
+
+    def test_unknown_keys_reject_the_whole_block(self):
+        text = "---\nsource: a.py\nunexpected: 1\n---\n\nbody\n"
+        assert llm_wiki.split_frontmatter(text) == ({}, text)
+
+    def test_unterminated_block_is_not_frontmatter(self):
+        text = "---\nsource: a.py\n\nbody without a closing fence\n"
+        assert llm_wiki.split_frontmatter(text) == ({}, text)
+
+    def test_page_frontmatter_of_missing_file_is_empty(self, repo):
+        assert llm_wiki.page_frontmatter(Path(repo) / "nope.md") == {}
+
+
+class TestPageFreshness:
+    """Freshness is read from the page, not from a sidecar that could disagree
+    with it. The bug this design removes: deleting a page while the cache still
+    called it fresh."""
+
+    @staticmethod
+    def _write_page(repo: str, source_rel: str, content_hash: str) -> None:
+        page = llm_wiki.llm_wiki_dir(repo) / llm_wiki.page_path_for(source_rel)
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text(
+            llm_wiki.render_frontmatter({"source": source_rel, "sha256": content_hash}) + "# Page\n",
+            encoding="utf-8",
+        )
+
+    def test_matching_hash_is_fresh(self, repo):
+        self._write_page(repo, "src/a.py", "d" * 64)
+        assert llm_wiki._page_is_fresh(repo, "src/a.py", "d" * 64) is True
+
+    def test_changed_source_is_stale(self, repo):
+        self._write_page(repo, "src/a.py", "d" * 64)
+        assert llm_wiki._page_is_fresh(repo, "src/a.py", "e" * 64) is False
+
+    def test_deleted_page_is_stale(self, repo):
+        assert llm_wiki._page_is_fresh(repo, "src/a.py", "d" * 64) is False
+
+    def test_page_from_before_frontmatter_is_stale(self, repo):
+        """No header, no hash — an old-format page regenerates rather than being
+        trusted. There is no migration; generated artifacts are disposable."""
+        page = llm_wiki.llm_wiki_dir(repo) / llm_wiki.page_path_for("src/a.py")
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text("# Page\n", encoding="utf-8")
+        assert llm_wiki._page_is_fresh(repo, "src/a.py", "d" * 64) is False

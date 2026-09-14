@@ -18,9 +18,19 @@ instead of a hairball.
 This module is that tier: one note per meaningful directory, linked to the other
 modules it actually depends on (edges taken from the real dependency graph), plus
 an INDEX hub linking to all of them. Roughly 20–30 notes for a large repo instead
-of 900, and they are the only wiki-side artifacts mirrored into the vault. Written
-to <repo>/<OUT_DIR>/wiki/ — the human-facing counterpart to the per-file
-llm-wiki tier.
+of 900, and they are the only documentation artifacts mirrored into the vault.
+Written to <repo>/<OUT_DIR>/modules/ — the human-facing counterpart to the
+per-file llm-wiki tier.
+
+THE NAME
+───────────────────────────────────────────────────────────────────────────────
+This tier lived at <OUT_DIR>/wiki/ between 03249e4 and the rename. That name
+was one token from llm-wiki/ and pointed at the opposite audience, so a path
+that kept working after the split silently changed meaning: a consumer holding
+the old sense read directory notes believing they were per-file pages, with no
+error anywhere to signal it. `modules/` describes the shape instead of the
+relationship, and matches what the code has always called these (_ROOT_MODULE,
+module_title, _MAX_FILES_PER_MODULE).
 
 COST
 ───────────────────────────────────────────────────────────────────────────────
@@ -43,8 +53,8 @@ from shared.progress import Progress
 from shared.providers import call_llm
 from shared.utils import now_iso
 
-_WIKI_SUBPATH = Path(config.OUT_DIR) / "wiki"
-_CACHE_FILENAME = ".wiki-cache.json"
+_MODULES_SUBPATH = Path(config.OUT_DIR) / "modules"
+_CACHE_FILENAME = ".modules-cache.json"
 _INDEX_FILENAME = "INDEX.md"
 _ROOT_MODULE = ""
 _ROOT_PAGE_NAME = "ROOT"
@@ -97,12 +107,12 @@ Rules:
 - Be factual and brief. Never invent features the module names do not support."""
 
 
-def wiki_dir(repo_path: str) -> Path:
-    return Path(repo_path) / _WIKI_SUBPATH
+def modules_dir(repo_path: str) -> Path:
+    return Path(repo_path) / _MODULES_SUBPATH
 
 
 def _cache_file(repo_path: str) -> Path:
-    return wiki_dir(repo_path) / _CACHE_FILENAME
+    return modules_dir(repo_path) / _CACHE_FILENAME
 
 
 def page_name_for(module: str, repo_name: str) -> str:
@@ -483,21 +493,21 @@ def generate(
 
     if dry_run:
         for module in stale:
-            print(f"Wiki     : would regenerate {page_name_for(module, repo_name)}  ({module_title(module)})")
+            print(f"Modules  : would regenerate {page_name_for(module, repo_name)}  ({module_title(module)})")
         if not stale:
-            print("Wiki     : nothing to regenerate (all module notes fresh)")
+            print("Modules  : nothing to regenerate (all module notes fresh)")
         return {
-            "artifact": str(_WIKI_SUBPATH),
+            "artifact": str(_MODULES_SUBPATH),
             "dry_run": True,
             "planned": stale,
             "module_count": len(grouped),
         }
 
-    out_dir = wiki_dir(repo_path)
+    out_dir = modules_dir(repo_path)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     written: list[str] = []
-    progress = Progress(len(stale), "Wiki")
+    progress = Progress(len(stale), "Modules")
     for module in stale:
         members = grouped[module]
         listed = members[:_MAX_FILES_IN_PROMPT]
@@ -544,7 +554,7 @@ def generate(
         ).strip()
         cache["__index__"] = {"digest": index_digest, "body": intro, "updated": now_iso()}
         written.append(index_name_for(repo_name))
-        print(f"Wiki     : wrote {index_name_for(repo_name)}")
+        print(f"Modules  : wrote {index_name_for(repo_name)}")
     index_path.write_text(
         _render_index(
             repo_name,
@@ -560,13 +570,13 @@ def generate(
     valid = {page_name_for(m, repo_name) for m in grouped} | {index_name_for(repo_name)}
     removed = _prune(out_dir, valid)
     for name in removed:
-        print(f"Wiki     : pruned {name}")
+        print(f"Modules  : pruned {name}")
     for key in set(cache) - set(grouped) - {"__index__"}:
         cache.pop(key, None)
     _save_cache(repo_path, cache)
 
     return {
-        "artifact": str(_WIKI_SUBPATH),
+        "artifact": str(_MODULES_SUBPATH),
         "dry_run": False,
         "written": written,
         "removed": removed,
@@ -577,7 +587,7 @@ def generate(
 
 def mirror_to_vault(repo_path: str, vault_path: Path) -> Path:
     """Mirror the module tier into the vault under Projects/<repo>/Generated/Modules/."""
-    source = wiki_dir(repo_path)
+    source = modules_dir(repo_path)
     if not source.exists() or not any(source.glob("*.md")):
         raise FileNotFoundError(f"module tier not generated yet: {source}")
     project_root = vault_path / "Projects" / repo_display_name(repo_path)

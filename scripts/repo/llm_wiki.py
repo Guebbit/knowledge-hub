@@ -17,7 +17,7 @@ AUDIENCE: this tier is written for machines. One page per source file is the
 right granularity for the semantic index and REPO_CONTEXT.md — an AI resolves a
 question without opening the file — and the wrong granularity for a human, who
 would face hundreds of near-identical notes. So per-file pages stay in the repo
-and are never mirrored into the vault; repo/wiki.py builds the human-facing
+and are never mirrored into the vault; repo/modules.py builds the human-facing
 tier on top of them. See docs/2brain-internals.md §8.
 """
 
@@ -36,8 +36,12 @@ from shared.providers import call_llm
 from shared.utils import now_iso
 
 _LLM_WIKI_SUBPATH = Path(config.OUT_DIR) / "llm-wiki"
-_CACHE_FILENAME = ".llm-wiki-cache.json"
 _OVERVIEW_FILENAME = "OVERVIEW.md"
+_FRONTMATTER_FENCE = "---"
+# Only these keys are written, and only these are trusted when read back. A page
+# is regenerated from its source, never hand-edited, so an unknown key means a
+# stale page from an older version rather than something to preserve.
+_FRONTMATTER_KEYS = ("source", "sha256", "generated_at", "model")
 # graph.json is graphify's own output, so it lives in the nested graphify dir.
 _GRAPH_JSON_SUBPATH = Path(config.GRAPHIFY_OUT) / "graph.json"
 
@@ -101,28 +105,54 @@ def llm_wiki_dir(repo_path: str) -> Path:
     return Path(repo_path) / _LLM_WIKI_SUBPATH
 
 
-def _cache_file(repo_path: str) -> Path:
-    return llm_wiki_dir(repo_path) / _CACHE_FILENAME
+def render_frontmatter(fields: dict[str, str]) -> str:
+    """Render the page header. Deliberately not YAML — see split_frontmatter."""
+    lines = [_FRONTMATTER_FENCE]
+    lines.extend(f"{key}: {fields[key]}" for key in _FRONTMATTER_KEYS if fields.get(key))
+    lines.append(_FRONTMATTER_FENCE)
+    return "\n".join(lines) + "\n\n"
 
 
-def _load_cache(repo_path: str) -> dict[str, dict[str, str]]:
-    """Load the per-file hash cache; tolerate a missing or corrupt file."""
-    path = _cache_file(repo_path)
-    if not path.exists():
-        return {}
+def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """Split a page into (frontmatter fields, body). Missing header → ({}, text).
+
+    A hand-rolled `key: value` reader rather than a YAML parse, for two reasons.
+    It keeps this tier dependency-free, and the values are ours: four known keys
+    holding a path, a hex digest, an ISO timestamp and a `provider:model` string.
+    That last one is why the split is on the *first* colon only — `ollama:qwen3:8b`
+    is a legal value and a naive split would truncate it.
+
+    The strictness matters more than the parsing. A generated body may legally
+    open with `---` as a horizontal rule, so a block only counts as frontmatter
+    when every line in it is a recognised `key: value` pair. A page that opens
+    with a rule is read as having no frontmatter, which makes it look stale and
+    costs one regeneration — the safe direction to fail.
+    """
+    if not text.startswith(_FRONTMATTER_FENCE + "\n"):
+        return {}, text
+    rest = text[len(_FRONTMATTER_FENCE) + 1 :]
+    end = rest.find("\n" + _FRONTMATTER_FENCE + "\n")
+    if end == -1:
+        return {}, text
+
+    fields: dict[str, str] = {}
+    for line in rest[:end].splitlines():
+        key, sep, value = line.partition(":")
+        if not sep or key.strip() not in _FRONTMATTER_KEYS:
+            return {}, text
+        fields[key.strip()] = value.strip()
+
+    body = rest[end + len(_FRONTMATTER_FENCE) + 2 :]
+    return fields, body.lstrip("\n")
+
+
+def page_frontmatter(path: Path) -> dict[str, str]:
+    """Read one page's frontmatter from disk; {} when absent or unreadable."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
         return {}
-    pages = data.get("pages") if isinstance(data, dict) else None
-    return pages if isinstance(pages, dict) else {}
-
-
-def _save_cache(repo_path: str, pages: dict[str, dict[str, str]]) -> None:
-    path = _cache_file(repo_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"version": 1, "updated_at": now_iso(), "pages": pages}
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return split_frontmatter(text)[0]
 
 
 def page_path_for(rel_path: str) -> str:
@@ -304,19 +334,30 @@ def _read_truncated(path: Path) -> str:
     return text
 
 
-def _generate_page(repo: Path, rel_path: str, neighbors: set[str]) -> str:
-    """Ask the LLM for one wiki page and return its Markdown content."""
+def _current_model() -> str:
+    """The provider:model that just answered.
+
+    Read after the call, never before: config.PROVIDER/MODEL are mutated in place
+    when providers.py falls back to the local preset (a missing API key, say), so
+    reading first would stamp pages with a model that did not write them.
+    """
+    return f"{config.PROVIDER}:{config.MODEL}"
+
+
+def _generate_page(repo: Path, rel_path: str, neighbors: set[str]) -> tuple[str, str]:
+    """Ask the LLM for one wiki page; return its Markdown body and the model used."""
     neighbor_lines = "\n".join(f"- {n}" for n in sorted(neighbors)[:_MAX_NEIGHBORS_IN_PROMPT]) or "- (none)"
     prompt = _PAGE_PROMPT.format(
         rel_path=rel_path,
         neighbors=neighbor_lines,
         content=_read_truncated(repo / rel_path),
     )
-    return call_llm(prompt).strip() + "\n"
+    body = call_llm(prompt).strip() + "\n"
+    return body, _current_model()
 
 
-def _generate_overview(files: list[str], adjacency: dict[str, set[str]]) -> str:
-    """Ask the LLM for the top-level overview page."""
+def _generate_overview(files: list[str], adjacency: dict[str, set[str]]) -> tuple[str, str]:
+    """Ask the LLM for the top-level overview page; return its body and the model used."""
     listed = files[:_MAX_OVERVIEW_FILES]
     file_lines = "\n".join(f"- {f}" for f in listed)
     if len(files) > _MAX_OVERVIEW_FILES:
@@ -324,7 +365,8 @@ def _generate_overview(files: list[str], adjacency: dict[str, set[str]]) -> str:
     hubs = sorted(adjacency, key=lambda node: len(adjacency[node]), reverse=True)[:10]
     graph_summary = "\n".join(f"- {node} connects to {len(adjacency[node])} files" for node in hubs) or "- (no edges)"
     prompt = _OVERVIEW_PROMPT.format(files=file_lines, graph_summary=graph_summary)
-    return call_llm(prompt).strip() + "\n"
+    body = call_llm(prompt).strip() + "\n"
+    return body, _current_model()
 
 
 def _prune_stale_pages(repo_path: str, valid_pages: set[str]) -> list[str]:
@@ -347,9 +389,22 @@ def _prune_stale_pages(repo_path: str, valid_pages: set[str]) -> list[str]:
     return sorted(removed)
 
 
-def _page_is_fresh(repo_path: str, rel_path: str, cached: dict[str, str], content_hash: str) -> bool:
-    """A page is fresh when its cached source hash matches and the page file still exists."""
-    return cached.get("hash") == content_hash and (llm_wiki_dir(repo_path) / page_path_for(rel_path)).exists()
+def _page_is_fresh(repo_path: str, rel_path: str, content_hash: str) -> bool:
+    """A page is fresh when the source hash in its own frontmatter still matches.
+
+    This used to consult a sidecar .llm-wiki-cache.json holding the same hashes.
+    The sidecar could disagree with the pages it described — delete a page and the
+    cache still called it fresh, so the check needed a second existence test to
+    compensate. Reading the hash from the page removes the disagreement by
+    construction: no page, no hash, no freshness. It also makes an interrupted run
+    self-describing, since each page records its own state as it is written rather
+    than relying on a separate file being flushed in step.
+
+    Cost is one small read per candidate instead of one JSON parse per run. That
+    only bites on a full rebuild, which is about to make an LLM call per file
+    anyway.
+    """
+    return page_frontmatter(llm_wiki_dir(repo_path) / page_path_for(rel_path)).get("sha256") == content_hash
 
 
 def generate(
@@ -393,12 +448,10 @@ def generate(
         seeds = changed_files & set(candidates)
         targets = expand_neighbors(seeds, adjacency) & set(page_candidates)
 
-    cache = _load_cache(repo_path)
     plan: list[tuple[str, str]] = []  # (rel_path, content_hash)
     for rel_path in sorted(targets):
         content_hash = _hash_bytes((repo / rel_path).read_bytes())
-        cached = cache.get(rel_path, {})
-        if not force_all and _page_is_fresh(repo_path, rel_path, cached, content_hash):
+        if not force_all and _page_is_fresh(repo_path, rel_path, content_hash):
             continue
         plan.append((rel_path, content_hash))
 
@@ -427,30 +480,44 @@ def generate(
     progress = Progress(len(plan), "LLM Wiki")
     for rel_path, content_hash in plan:
         neighbors = adjacency.get(rel_path, set())
-        page = _generate_page(repo, rel_path, neighbors)
+        body, model = _generate_page(repo, rel_path, neighbors)
         page_rel = page_path_for(rel_path)
         page_file = out_dir / page_rel
         page_file.parent.mkdir(parents=True, exist_ok=True)
-        page_file.write_text(page, encoding="utf-8")
-        cache[rel_path] = {"hash": content_hash, "page": page_rel, "generated_at": now_iso()}
-        # Persist after every page, not once at the end: a run interrupted at page
-        # 300 of 430 must not throw away the 300 it already paid for.
-        _save_cache(repo_path, cache)
+        # The page carries its own provenance, so it is complete the moment it
+        # lands: a run interrupted at page 300 of 430 keeps all 300, with nothing
+        # else needing to be flushed in step to prove it.
+        page_file.write_text(
+            render_frontmatter(
+                {
+                    "source": rel_path,
+                    "sha256": content_hash,
+                    "generated_at": now_iso(),
+                    "model": model,
+                }
+            )
+            + body,
+            encoding="utf-8",
+        )
         written.append(page_rel)
         progress.step(rel_path)
 
-    for stale in set(cache) - set(page_candidates):
-        cache.pop(stale, None)
     removed = _prune_stale_pages(repo_path, valid_pages)
     for name in removed:
         print(f"LLM Wiki : pruned {name}")
 
     overview_path = out_dir / _OVERVIEW_FILENAME
     if written or removed or not overview_path.exists():
-        overview_path.write_text(_generate_overview(candidates, adjacency), encoding="utf-8")
+        overview_body, overview_model = _generate_overview(candidates, adjacency)
+        # No `source`/`sha256`: the overview summarises the whole documented set
+        # rather than one file, so there is nothing to hash it against. It is
+        # rewritten whenever any page changed, which is the condition above.
+        overview_path.write_text(
+            render_frontmatter({"generated_at": now_iso(), "model": overview_model}) + overview_body,
+            encoding="utf-8",
+        )
         print(f"LLM Wiki : wrote {_OVERVIEW_FILENAME}")
 
-    _save_cache(repo_path, cache)
     if not written and not removed:
         print("LLM Wiki : nothing to regenerate (all pages fresh)")
 
@@ -488,7 +555,9 @@ def read_pages(repo_path: str, candidates: list[str]) -> dict[str, str]:
             continue
         page = out_dir / page_path_for(rel_path)
         if page.is_file():
-            pages[rel_path] = page.read_text(encoding="utf-8", errors="replace")
+            # Body only: the module tier feeds these straight into a prompt, and a
+            # header of hashes and timestamps is tokens spent on nothing it can use.
+            pages[rel_path] = split_frontmatter(page.read_text(encoding="utf-8", errors="replace"))[1]
     return pages
 
 

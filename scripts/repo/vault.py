@@ -1,7 +1,7 @@
 """
 Shared helpers for mirroring 2brain-generated Markdown into the Obsidian vault.
 
-Both the wiki layer (repo/wiki.py) and the architecture layer (repo/arch.py)
+Both the module layer (repo/modules.py) and the architecture layer (repo/arch.py)
 mirror their generated pages into vault/Projects/<repo-name>/Generated/...; this
 module holds the logic they share: detecting whether a usable vault is present,
 resolving a human-readable repo name, and copying + pruning a directory of

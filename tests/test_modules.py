@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from repo import wiki as modules
+from repo import modules
 
 
 def _files(spec: dict[str, int]) -> list[str]:

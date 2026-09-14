@@ -14,7 +14,7 @@ def _touch(path: Path, text: str = "content") -> None:
 
 
 class TestArtifactFiles:
-    """wiki/ (the human-facing per-directory tier) must be excluded: it is
+    """modules/ (the human-facing per-directory tier) must be excluded: it is
     written from llm-wiki/'s pages, so indexing both means the same facts are
     indexed twice, which depresses IDF on the terms that should discriminate.
     """
@@ -32,11 +32,11 @@ class TestArtifactFiles:
     def test_the_directory_tier_is_excluded(self, repo):
         out = Path(repo) / ".2brain"
         _touch(out / "llm-wiki" / "src" / "a.py.md")
-        _touch(out / "wiki" / "src_ROOT.md")
+        _touch(out / "modules" / "src_ROOT.md")
 
         files = index._artifact_files(Path(repo))
 
-        assert out / "wiki" / "src_ROOT.md" not in files
+        assert out / "modules" / "src_ROOT.md" not in files
 
     def test_top_level_reports_are_indexed_when_present(self, repo):
         out = Path(repo) / ".2brain"
@@ -68,7 +68,7 @@ class TestArtifactFiles:
         out = Path(repo) / ".2brain"
         _touch(out / "graphify-out" / "graph.json")
         _touch(out / "graphify-out" / "manifest.json")
-        _touch(out / "llm-wiki" / ".llm-wiki-cache.json")
+        _touch(out / "modules" / ".modules-cache.json")
         _touch(out / "repo-index.json")
         _touch(out / ".2brain-state.json")
 
@@ -229,3 +229,64 @@ class TestChunkingDoesNotStrandHeadings:
     def test_a_short_document_still_produces_one_chunk(self):
         """A file below the floor is not dropped — it has nowhere to merge into."""
         assert index._chunk_plain_text("# Tiny\n") == ["# Tiny"]
+
+
+class TestWikiPageChunks:
+    """An llm-wiki page names the file it documents in its frontmatter. The index
+    returns that path, and never indexes the header itself.
+    """
+
+    def test_source_path_replaces_the_page_path(self, repo):
+        out = Path(repo) / ".2brain"
+        _touch(
+            out / "llm-wiki" / "scripts" / "a.py.md",
+            "---\nsource: scripts/a.py\nsha256: "
+            + "f" * 64
+            + "\nmodel: ollama:qwen3:8b\n---\n\nThis module parses the configuration file at startup.\n",
+        )
+
+        chunks = index._build_chunk_records(
+            Path(repo),
+            artifact_files=[out / "llm-wiki" / "scripts" / "a.py.md"],
+            prose_files=[],
+            runtime_metadata={},
+        )
+
+        assert [c["source"] for c in chunks] == ["scripts/a.py"]
+        assert [c["kind"] for c in chunks] == ["wiki"]
+
+    def test_frontmatter_never_reaches_the_corpus(self, repo):
+        """"model" and "source" are words worth querying; in every page's header
+        they would be present everywhere and discriminate nothing. The digest is
+        a unique token per page and pure vocabulary growth."""
+        out = Path(repo) / ".2brain"
+        digest = "f" * 64
+        _touch(
+            out / "llm-wiki" / "scripts" / "a.py.md",
+            f"---\nsource: scripts/a.py\nsha256: {digest}\nmodel: ollama:qwen3:8b\n---\n\nReal prose only.\n",
+        )
+
+        chunks = index._build_chunk_records(
+            Path(repo),
+            artifact_files=[out / "llm-wiki" / "scripts" / "a.py.md"],
+            prose_files=[],
+            runtime_metadata={},
+        )
+        text = "\n".join(c["text"] for c in chunks)
+
+        assert digest not in text
+        assert "sha256" not in text
+        assert "generated_at" not in text
+        assert "Real prose only." in text
+
+    def test_headerless_artifacts_still_name_themselves(self, repo):
+        """EXECUTION.md and arch/ pages carry no frontmatter and are their own source."""
+        out = Path(repo) / ".2brain"
+        _touch(out / "EXECUTION.md", "Run the suite with `make test`.\n")
+
+        chunks = index._build_chunk_records(
+            Path(repo), artifact_files=[out / "EXECUTION.md"], prose_files=[], runtime_metadata={}
+        )
+
+        assert [c["source"] for c in chunks] == [".2brain/EXECUTION.md"]
+        assert [c["kind"] for c in chunks] == ["artifact"]

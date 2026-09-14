@@ -27,9 +27,9 @@ _REQUIRED_ARTIFACTS = (
     _OUT / "EXECUTION.md",
     _OUT / "REPO_MEMORY.md",
 )
-# Explicit allowlist for the semantic corpus. wiki/ (the human-facing
+# Explicit allowlist for the semantic corpus. modules/ (the human-facing
 # per-directory tier) is deliberately NOT here: it is written *from*
-# llm-wiki/'s per-file pages (wiki.py's read_pages()), so indexing both tiers
+# llm-wiki/'s per-file pages (modules.py's read_pages()), so indexing both tiers
 # means ~79% of the corpus is the same facts twice, which depresses IDF on
 # exactly the terms that should discriminate a query. A new artifact tier
 # must be added here explicitly rather than silently joining by virtue of
@@ -159,10 +159,10 @@ def _artifact_files(repo: Path) -> list[Path]:
 
     Only the top-level generated reports plus llm-wiki/ and arch/ (both
     per-file/per-topic docs) are indexed — see _ALLOWLISTED_MD_DIRS above for
-    why wiki/ is excluded. Everything else generated under OUT_DIR (raw
-    graphify dumps, incremental caches, repo-index.json/repo-memory.json/
-    .2brain-state.json) was never prose and is skipped by construction: it
-    would have to be named in an allowlist entry to be indexed at all.
+    why modules/ is excluded. Everything else generated under OUT_DIR (raw
+    graphify dumps, repo-index.json/repo-memory.json/.2brain-state.json) was
+    never prose and is skipped by construction: it would have to be named in an
+    allowlist entry to be indexed at all.
     """
     out_dir = repo / config.OUT_DIR
     if not out_dir.exists():
@@ -248,13 +248,28 @@ def _build_chunk_records(
 
     for path in artifact_files:
         rel = str(path.relative_to(repo))
-        text = _load_text(path)
+        fields, text = repo_llm_wiki.split_frontmatter(_load_text(path))
+        # Two things fall out of splitting the header off an llm-wiki page.
+        #
+        # It stays out of the corpus: every page would otherwise contribute the
+        # literal tokens "source", "sha256", "generated_at" and "model" — words
+        # common enough to be worth querying, present in *every* page, so their
+        # IDF collapses and a real question about the model layer ranks against
+        # noise — plus one unique 64-character digest token apiece, which is
+        # pure vocabulary growth.
+        #
+        # And the page can say what it documents. `source` is the file a caller
+        # actually wants back from a query; the page path is that path plus
+        # ".md", so returning the source loses nothing and saves the translation.
+        # A page with no header (OVERVIEW.md, arch/, the top-level reports)
+        # falls back to naming itself.
+        documented = fields.get("source")
         for idx, chunk_text in enumerate(_chunk_plain_text(text)):
             chunks.append(
                 {
                     "id": f"artifact:{rel}:{idx}",
-                    "kind": "artifact",
-                    "source": rel,
+                    "kind": "wiki" if documented else "artifact",
+                    "source": documented or rel,
                     "text": chunk_text,
                 }
             )

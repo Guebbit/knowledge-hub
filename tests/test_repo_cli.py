@@ -98,3 +98,91 @@ class TestStateLayerRefresh:
         repo_cli._refresh_state_layers(str(tmp_path), pipeline={"index": {}})
 
         assert state.read_text() == "{not json"
+
+
+class TestHookOffer:
+    """The end-of-run prompt must stay silent in every case where asking would be
+    wrong: no git repo, our hook already installed, the user opted out, or a
+    foreign post-commit hook that _install_hook would overwrite.
+    """
+
+    @staticmethod
+    def _write_post_commit(path: Path, body: str) -> Path:
+        hooks = path / ".git" / "hooks"
+        hooks.mkdir(parents=True, exist_ok=True)
+        hook = hooks / "post-commit"
+        hook.write_text(body)
+        return hook
+
+    def test_detects_our_own_hook(self, repo_cli, tmp_path):
+        self._write_post_commit(tmp_path, "#!/usr/bin/env bash\necho '2brain warning: ...'\n")
+        assert repo_cli._hook_is_installed(str(tmp_path)) is True
+
+    def test_foreign_hook_is_not_ours(self, repo_cli, tmp_path):
+        self._write_post_commit(tmp_path, "#!/usr/bin/env bash\nmake lint\n")
+        assert repo_cli._hook_is_installed(str(tmp_path)) is False
+
+    def test_missing_hook_is_not_installed(self, repo_cli, tmp_path):
+        assert repo_cli._hook_is_installed(str(tmp_path)) is False
+
+    def test_silent_outside_a_git_repo(self, repo_cli, tmp_path, capsys, monkeypatch):
+        monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _p: False)
+        repo_cli._offer_hook(str(tmp_path))
+        assert capsys.readouterr().out == ""
+
+    def test_silent_when_already_installed(self, repo_cli, tmp_path, capsys, monkeypatch):
+        monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _p: True)
+        self._write_post_commit(tmp_path, "#!/usr/bin/env bash\n# 2brain warning\n")
+        repo_cli._offer_hook(str(tmp_path))
+        assert capsys.readouterr().out == ""
+
+    def test_silent_when_opted_out(self, repo_cli, tmp_path, capsys, monkeypatch):
+        monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _p: True)
+        monkeypatch.setenv(repo_cli._HOOK_PROMPT_ENV, "0")
+        repo_cli._offer_hook(str(tmp_path))
+        assert capsys.readouterr().out == ""
+
+    def test_never_overwrites_a_foreign_hook(self, repo_cli, tmp_path, capsys, monkeypatch):
+        monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _p: True)
+        monkeypatch.delenv(repo_cli._HOOK_PROMPT_ENV, raising=False)
+        hook = self._write_post_commit(tmp_path, "#!/usr/bin/env bash\nmake lint\n")
+
+        def _boom(_path):
+            raise AssertionError("_install_hook must not run when a foreign hook exists")
+
+        monkeypatch.setattr(repo_cli, "_install_hook", _boom)
+        monkeypatch.setattr(repo_cli.sys.stdin, "isatty", lambda: True)
+        repo_cli._offer_hook(str(tmp_path))
+
+        assert "left untouched" in capsys.readouterr().out
+        assert hook.read_text() == "#!/usr/bin/env bash\nmake lint\n"
+
+    def test_non_interactive_hints_instead_of_prompting(self, repo_cli, tmp_path, capsys, monkeypatch):
+        monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _p: True)
+        monkeypatch.delenv(repo_cli._HOOK_PROMPT_ENV, raising=False)
+        monkeypatch.setattr(repo_cli.sys.stdin, "isatty", lambda: False)
+        repo_cli._offer_hook(str(tmp_path))
+        assert "2brain hook ." in capsys.readouterr().out
+
+    def test_yes_installs(self, repo_cli, tmp_path, monkeypatch):
+        monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _p: True)
+        monkeypatch.delenv(repo_cli._HOOK_PROMPT_ENV, raising=False)
+        monkeypatch.setattr(repo_cli.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+        installed: list[str] = []
+        monkeypatch.setattr(repo_cli, "_install_hook", lambda path: installed.append(path))
+        repo_cli._offer_hook(str(tmp_path))
+        assert installed == [str(tmp_path)]
+
+    def test_default_is_no(self, repo_cli, tmp_path, capsys, monkeypatch):
+        monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _p: True)
+        monkeypatch.delenv(repo_cli._HOOK_PROMPT_ENV, raising=False)
+        monkeypatch.setattr(repo_cli.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _prompt: "")
+
+        def _boom(_path):
+            raise AssertionError("empty answer must not install")
+
+        monkeypatch.setattr(repo_cli, "_install_hook", _boom)
+        repo_cli._offer_hook(str(tmp_path))
+        assert "skipped" in capsys.readouterr().out
