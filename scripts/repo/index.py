@@ -56,6 +56,26 @@ _ALLOWLISTED_MD_DIRS = (
     _OUT / "arch",
 )
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]{2,}")
+# Small, fixed English stoplist — question words and function words that carry
+# weight in nothing but a phrase ("how do I run tests?" scored "how"/"do"/"i").
+# 1-char words are omitted: _TOKEN_PATTERN never produces them.
+_STOP_WORDS = frozenset({
+    "an", "and", "are", "as", "at", "be", "been", "being", "by",
+    "can", "could", "did", "do", "does", "doing", "don", "for", "from",
+    "had", "has", "have", "having", "how", "if", "in", "into", "is",
+    "it", "its", "me", "my", "of", "on", "or", "our", "should", "so",
+    "that", "the", "their", "them", "there", "these", "they", "this",
+    "those", "to", "was", "we", "were", "what", "when", "where", "which",
+    "who", "why", "will", "with", "would", "you", "your",
+})
+# Longest suffix first: "queries" must hit "ies" before the bare "s" strips it
+# down to "querie". A stripped stem below this length is rejected — a stem
+# that short (e.g. "as" from "gas") stops discriminating, and a 1-2 letter
+# acronym must never lose a letter it needs.
+_STEM_SUFFIXES = ("ies", "ing", "es", "ed", "s")
+_MIN_STEM_LENGTH = 3
+_VOWELS = frozenset("aeiou")
+_ES_AFTER = frozenset("sxzh")
 _MAX_CHUNK_CHARS = 1200
 # Below this, a chunk is a fragment rather than an answer — a markdown heading,
 # a one-line note — and scores on too few terms to be trusted. See
@@ -66,6 +86,13 @@ _QUERY_EXPANSION_WEIGHT = 0.35
 _BASE_SCORE_WEIGHT = 0.65
 _EXPANDED_SCORE_WEIGHT = 0.35
 _EXPANSION_SEED_TERMS_PER_CHUNK = 25
+# A wrong top hit's own vocabulary must not be allowed to reinforce itself: expand
+# only when the leader is clearly ahead of #2, not neck-and-neck with it.
+_EXPANSION_CONFIDENCE_RATIO = 1.2
+# Tunable: how much more a title word counts than a body word (see
+# _title_tokens_source). Implemented as term-frequency repetition, not a
+# separate weight parameter, so it flows through the existing TF-IDF math.
+_TITLE_WEIGHT = 3
 # A long artifact chunks into dozens of records that all answer to the same
 # source. Without a cap one document can take most of the result set — and,
 # worse, most of the expansion seed, which then injects its vocabulary into the
@@ -84,15 +111,34 @@ def _index_file(repo: Path) -> Path:
     return repo / _INDEX_SUBPATH
 
 
+def _stem(token: str) -> str:
+    """Strip one inflectional suffix, undoing English consonant doubling.
+
+    Light, not a full Porter stemmer: one suffix, one pass, no dictionary. Doubling
+    only applies after -ing/-ed ("running"→"runn"→"run", "tested"→"test", no
+    doubling needed): that pattern (double the final consonant before a vowel
+    suffix) is what closes the gap "run" ↔ "runs"/"running" needs.
+    """
+    for suffix in _STEM_SUFFIXES:
+        if not token.endswith(suffix):
+            continue
+        if suffix == "es" and (len(token) < 3 or token[-3] not in _ES_AFTER):
+            # "modules" is "module"+s, not a stem+"es" — only a regular English
+            # -es plural (box→boxes, watch→watches) ends in one of these letters
+            # right before the "es"; anything else falls through to plain "s".
+            continue
+        stem = token[: -len(suffix)]
+        if len(stem) < _MIN_STEM_LENGTH:
+            continue
+        if suffix in ("ing", "ed") and len(stem) >= 2 and stem[-1] == stem[-2] and stem[-1] not in _VOWELS:
+            stem = stem[:-1]
+        return stem
+    return token
+
+
 def _tokenize(text: str) -> list[str]:
-    """Tokenize text into lowercase terms with a light plural-normalization step."""
-    tokens: list[str] = []
-    for token in _TOKEN_PATTERN.findall(text.lower()):
-        tokens.append(token)
-        # Lightweight plural normalization for retrieval recall (not a full stemmer).
-        if token.endswith("s") and len(token) > 3 and not token.endswith("ss"):
-            tokens.append(token[:-1])
-    return tokens
+    """Tokenize text into lowercase, stop-word-filtered, lightly stemmed terms."""
+    return [_stem(token) for token in _TOKEN_PATTERN.findall(text.lower()) if token not in _STOP_WORDS]
 
 
 def _hash_text(text: str) -> str:
@@ -224,6 +270,23 @@ def _source_prose_files(repo: Path) -> list[Path]:
     ]
 
 
+_HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.MULTILINE)
+_PATH_WORD_PATTERN = re.compile(r"[^a-z0-9]+")
+
+
+def _title_tokens_source(source_path: str, text: str) -> str:
+    """Path words plus the document's first heading — boosted into every chunk's vector.
+
+    A document *named* after its topic (strategic-ddd.md) should outrank pages
+    that only cite it once. Path and heading are properties of the file, not of
+    one paragraph, so the same title source is attached to every chunk from it.
+    """
+    path_words = _PATH_WORD_PATTERN.sub(" ", source_path.lower()).strip()
+    heading_match = _HEADING_PATTERN.search(text)
+    heading = heading_match.group(1) if heading_match else ""
+    return f"{path_words} {heading}".strip()
+
+
 def _build_chunk_records(
     repo: Path,
     *,
@@ -243,6 +306,7 @@ def _build_chunk_records(
                 "kind": "runtime",
                 "source": "runtime-metadata",
                 "text": runtime_text,
+                "title": "",
             }
         )
 
@@ -264,19 +328,24 @@ def _build_chunk_records(
         # A page with no header (OVERVIEW.md, arch/, the top-level reports)
         # falls back to naming itself.
         documented = fields.get("source")
+        source_label = documented or rel
+        title = _title_tokens_source(source_label, text)
         for idx, chunk_text in enumerate(_chunk_plain_text(text)):
             chunks.append(
                 {
                     "id": f"artifact:{rel}:{idx}",
                     "kind": "wiki" if documented else "artifact",
-                    "source": documented or rel,
+                    "source": source_label,
                     "text": chunk_text,
+                    "title": title,
                 }
             )
 
     for path in prose_files:
         rel = str(path.relative_to(repo))
-        for idx, chunk_text in enumerate(_chunk_plain_text(_load_text(path))):
+        full_text = _load_text(path)
+        title = _title_tokens_source(rel, full_text)
+        for idx, chunk_text in enumerate(_chunk_plain_text(full_text)):
             chunks.append(
                 {
                     # kind "source" rather than "artifact": this is the author's
@@ -286,6 +355,7 @@ def _build_chunk_records(
                     "kind": "source",
                     "source": rel,
                     "text": chunk_text,
+                    "title": title,
                 }
             )
 
@@ -297,6 +367,7 @@ def _build_chunk_records(
                 "kind": "memory",
                 "source": f"repo-memory:{entry['id']}",
                 "text": entry["text"],
+                "title": "",
             }
         )
     return chunks
@@ -394,7 +465,10 @@ def build_index(repo_path: str, *, runtime_metadata: dict[str, str]) -> dict[str
     if not chunks:
         raise ValueError("no index chunks were produced")
 
-    tokenized = [_tokenize(chunk["text"]) for chunk in chunks]
+    # Title tokens (path + first heading) are repeated _TITLE_WEIGHT times in the
+    # term-frequency count fed to _vectorize, which is what "weighted ×3" means
+    # in a TF-IDF vector: no separate scoring path needed.
+    tokenized = [_tokenize(chunk["text"]) + _tokenize(chunk.get("title", "")) * _TITLE_WEIGHT for chunk in chunks]
     token_sets = [set(tokens) for tokens in tokenized]
     idf = _compute_idf(token_sets)
 
@@ -494,6 +568,18 @@ def _cap_per_source(
     return kept
 
 
+def _confident_seed(scored: list[dict[str, object]]) -> bool:
+    """True when #1 is clearly ahead of #2 — safe to seed query expansion from.
+
+    A wrong #1 that is barely ahead of #2 must not get to inject its own
+    vocabulary into the query and reinforce its own rank. `scored` must
+    already be sorted best-first.
+    """
+    if len(scored) < 2:
+        return True
+    return float(scored[0]["base_score"]) >= float(scored[1]["base_score"]) * _EXPANSION_CONFIDENCE_RATIO
+
+
 def semantic_query(repo_path: str, *, text: str, top_k: int = 5) -> list[dict[str, object]]:
     """Run semantic retrieval against the index and return top ranked chunks."""
     query_text = text.strip()
@@ -528,27 +614,31 @@ def semantic_query(repo_path: str, *, text: str, top_k: int = 5) -> list[dict[st
         return []
 
     scored.sort(key=lambda item: float(item["base_score"]), reverse=True)
-    top_seed = _cap_per_source(
-        scored,
-        limit=min(len(scored), max(top_k * 2, 6)),
-        source_of=lambda item: str(item["chunk"].get("source") or ""),
-    )
 
-    expansion: Counter[str] = Counter()
-    query_set = set(query_tokens)
-    for item in top_seed:
-        chunk = item["chunk"]
-        vector = chunk["vector"]
-        ranked_terms = sorted(vector.items(), key=lambda kv: kv[1], reverse=True)
-        for token, weight in ranked_terms[:_EXPANSION_SEED_TERMS_PER_CHUNK]:
-            if token in query_set:
-                continue
-            expansion[token] += float(weight)
+    expanded_q, expanded_norm = q_vector, q_norm
+    if _confident_seed(scored):
+        top_seed = _cap_per_source(
+            scored,
+            limit=min(len(scored), max(top_k * 2, 6)),
+            source_of=lambda item: str(item["chunk"].get("source") or ""),
+        )
 
-    expanded_q = dict(q_vector)
-    for token, score in expansion.most_common(_QUERY_EXPANSION_TERMS):
-        expanded_q[token] = expanded_q.get(token, 0.0) + score * _QUERY_EXPANSION_WEIGHT
-    expanded_norm = math.sqrt(sum(value * value for value in expanded_q.values()))
+        expansion: Counter[str] = Counter()
+        query_set = set(query_tokens)
+        for item in top_seed:
+            chunk = item["chunk"]
+            vector = chunk["vector"]
+            ranked_terms = sorted(vector.items(), key=lambda kv: kv[1], reverse=True)
+            for token, weight in ranked_terms[:_EXPANSION_SEED_TERMS_PER_CHUNK]:
+                if token in query_set:
+                    continue
+                expansion[token] += float(weight)
+
+        if expansion:
+            expanded_q = dict(q_vector)
+            for token, score in expansion.most_common(_QUERY_EXPANSION_TERMS):
+                expanded_q[token] = expanded_q.get(token, 0.0) + score * _QUERY_EXPANSION_WEIGHT
+            expanded_norm = math.sqrt(sum(value * value for value in expanded_q.values()))
 
     results: list[dict[str, object]] = []
     for item in scored:

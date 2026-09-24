@@ -290,3 +290,158 @@ class TestWikiPageChunks:
 
         assert [c["source"] for c in chunks] == [".2brain/EXECUTION.md"]
         assert [c["kind"] for c in chunks] == ["artifact"]
+
+
+class TestTokenizeStopWordsAndStemming:
+    """Q1: question-shaped queries missed the obvious answer. No stop-word list
+    meant "how"/"do"/"i"/"does" scored; no real stemmer meant "run" never
+    matched "runs"/"running".
+    """
+
+    def test_stop_words_are_dropped(self):
+        tokens = index._tokenize("How do I run the tests?")
+        assert "how" not in tokens
+        assert "do" not in tokens
+        assert "the" not in tokens
+        assert "run" in tokens
+        assert "test" in tokens
+
+    def test_run_runs_running_share_a_stem(self):
+        assert index._tokenize("run") == index._tokenize("runs") == index._tokenize("running")
+
+    def test_test_and_testing_share_a_stem(self):
+        assert index._tokenize("test") == index._tokenize("testing")
+
+    def test_short_words_are_not_over_stemmed(self):
+        assert index._tokenize("gas") == ["gas"]
+        assert index._tokenize("css") == ["css"]
+
+    def test_plural_of_a_regular_noun_still_stems(self):
+        assert index._tokenize("modules") == index._tokenize("module")
+
+
+class TestTitleTokensSource:
+    """Q1: a document *named* after its topic must outrank pages that merely
+    cite it — strategic-ddd.md should win "strategic DDD" over five pages
+    that mention the filename once.
+    """
+
+    def test_path_words_and_first_heading_are_combined(self):
+        title = index._title_tokens_source(
+            "docs/theory/strategic-ddd.md", "# Strategic DDD\n\nBoundaries between contexts.\n"
+        )
+        assert "strategic" in title
+        assert "ddd" in title.lower()
+
+    def test_no_heading_still_yields_path_words(self):
+        title = index._title_tokens_source("src/app.ts", "just some code comments")
+        assert "app" in title
+
+    def test_title_weight_repeats_the_title_tokens(self, repo):
+        out = Path(repo) / ".2brain"
+        _touch(out / "EXECUTION.md", "Run the suite with `make test`.\n")
+
+        chunks = index._build_chunk_records(
+            Path(repo), artifact_files=[out / "EXECUTION.md"], prose_files=[], runtime_metadata={}
+        )
+
+        assert chunks[0]["title"]  # path words present, even with no heading
+
+
+def _build_and_query(repo_path: str, query: str, top_k: int = 5) -> list[dict[str, object]]:
+    out = Path(repo_path) / ".2brain"
+    out.mkdir(exist_ok=True)
+    if not (out / "EXECUTION.md").exists():
+        _touch(out / "EXECUTION.md", "placeholder")
+    _touch(out / "REPO_MEMORY.md", "no entries")
+    index.build_index(repo_path, runtime_metadata={})
+    return index.semantic_query(repo_path, text=query, top_k=top_k)
+
+
+class TestQueryFindsTheObviousAnswer:
+    """Regression fixtures mirroring ANALYSIS.md's Q1 cases: a small synthetic
+    corpus where a question-shaped query must surface the right source in the
+    top 3, not be crowded out by pages that merely mention the topic.
+    """
+
+    def test_execution_page_beats_individual_test_file_pages(self, repo):
+        out = Path(repo) / ".2brain"
+        _touch(
+            out / "EXECUTION.md",
+            "## Quick Commands\n\nRun the whole suite with `npm run test`. "
+            "This is the command to run tests locally before pushing.\n",
+        )
+        for i in range(5):
+            _touch(
+                out / "llm-wiki" / f"tests/case{i}.test.ts.md",
+                f"---\nsource: tests/case{i}.test.ts\nsha256: {'a' * 64}\nmodel: x\n---\n\n"
+                f"## Purpose\nChecks behavior number {i} of the widget subsystem in isolation.\n",
+            )
+
+        results = _build_and_query(repo, "how do I run tests?", top_k=3)
+
+        sources = [r["source"] for r in results]
+        assert ".2brain/EXECUTION.md" in sources
+
+    def test_named_doc_beats_pages_that_only_cite_it(self, repo):
+        root = Path(repo)
+        _touch(
+            root / "docs" / "theory" / "strategic-ddd.md",
+            "# Strategic DDD\n\nStrategic domain-driven design defines the module boundaries "
+            "between bounded contexts in this codebase.\n",
+        )
+        graph_files = ["docs/theory/strategic-ddd.md"]
+        out = root / ".2brain"
+        for i in range(5):
+            page = f"src/modules/m{i}/index.ts"
+            graph_files.append(page)
+            _touch(
+                out / "llm-wiki" / f"{page}.md",
+                f"---\nsource: {page}\nsha256: {'a' * 64}\nmodel: x\n---\n\n"
+                "## Purpose\nImplements this module, following the strategic-ddd.md approach.\n",
+            )
+        _write_graph(root, graph_files)
+
+        results = _build_and_query(repo, "strategic DDD module boundaries", top_k=3)
+
+        sources = [r["source"] for r in results]
+        assert "docs/theory/strategic-ddd.md" in sources
+
+
+class TestExpansionRequiresAConfidentSeed:
+    """Q1: query expansion seeded from a wrong #1 reinforces the mistake. A #1
+    barely ahead of #2 must not seed expansion at all.
+    """
+
+    def test_close_scores_are_not_confident(self):
+        scored = [{"base_score": 0.50}, {"base_score": 0.49}]
+        assert index._confident_seed(scored) is False
+
+    def test_a_clear_leader_is_confident(self):
+        scored = [{"base_score": 0.60}, {"base_score": 0.40}]
+        assert index._confident_seed(scored) is True
+
+    def test_exactly_at_the_ratio_is_confident(self):
+        scored = [{"base_score": 0.48}, {"base_score": 0.40}]  # 0.48 == 0.40 * 1.2
+        assert index._confident_seed(scored) is True
+
+    def test_a_single_result_is_always_confident(self):
+        assert index._confident_seed([{"base_score": 0.1}]) is True
+
+    def test_no_results_is_confident_by_default(self):
+        assert index._confident_seed([]) is True
+
+    def test_no_expansion_means_the_final_score_equals_the_base_score(self, repo):
+        out = Path(repo) / ".2brain"
+        _touch(out / "EXECUTION.md", "alpha beta gamma delta epsilon zeta eta theta\n")
+        _touch(
+            out / "llm-wiki" / "src" / "a.py.md",
+            f"---\nsource: src/a.py\nsha256: {'a' * 64}\nmodel: x\n---\n\n"
+            "alpha beta gamma delta epsilon zeta eta theta\n",
+        )
+
+        results = _build_and_query(repo, "alpha beta gamma delta", top_k=5)
+
+        assert len(results) == 2
+        for item in results:
+            assert item["score"] == item["base_score"], "identical documents must tie, not seed expansion"
