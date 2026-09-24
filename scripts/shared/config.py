@@ -116,14 +116,18 @@ GRAPHIFY_OUT = f"{OUT_DIR}/graphify-out"
 # in CLAUDE.md and nothing else, so a target repo's .claude/ is entirely
 # hand-written config — edits there are real repo changes.
 GENERATED_DIR_PREFIXES = (f"{OUT_DIR}/", ".cursor/", ".codeboarding/")
-# .graphifyignore and .gitattributes carry a 2brain-managed block (see
-# repo/injection.py), so regenerating them must not count as the repo changing —
-# same rule as CLAUDE.md, which likewise mixes managed and hand-written content.
+# .graphifyignore, .gitattributes and .gitignore carry a 2brain-managed block
+# (see repo/injection.py), so regenerating them must not count as the repo
+# changing — same rule as CLAUDE.md, which likewise mixes managed and
+# hand-written content. .2brainignore (SCOPE_FILE) is deliberately NOT here: a
+# scope change is a real reason to re-run the wiki, even though 2brain itself
+# offers to write it.
 GENERATED_FILES = (
     "CLAUDE.md",
     ".github/copilot-instructions.md",
     ".graphifyignore",
     ".gitattributes",
+    ".gitignore",
 )
 
 # Directories graphify must never ingest as source. graphify only self-prunes

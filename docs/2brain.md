@@ -39,7 +39,7 @@ Everything from here on is the detail behind those commands.
 
 | Command | What it does |
 |---|---|
-| `2brain <repo>` | Shortcut for `2brain graph <repo>` |
+| `2brain <repo>` | Shortcut for `2brain all <repo>` — every layer in order: graph, then wiki, then arch |
 | `2brain graph <repo>` | Full pipeline: extract → execution → memory → index → context → AI bridge |
 | `2brain graph <repo> --update` | Incremental refresh (changed files only) |
 | `2brain graph <repo> --ai-target <t>` | Non-interactive target select: `claude` `copilot` `cursor` `neutral` |
@@ -87,7 +87,7 @@ One tool, one subcommand per category (so no single command does too many differ
 | `2brain wiki <repo>` | Wiki | Generate/update the living LLM wiki incrementally |
 | `2brain arch <repo>` | Architecture | Generate/update component/topic docs + Mermaid diagrams (CodeBoarding), incrementally |
 
-`2brain <repo>` with no subcommand is a shortcut for `2brain graph <repo>`. Every other action uses its subcommand (`2brain wiki <repo>`, `2brain check <repo>`, ...).
+`2brain <repo>` with no subcommand is a shortcut for `2brain all <repo>` — every layer in order: graph, then wiki, then arch. Every other action uses its subcommand (`2brain graph <repo>`, `2brain wiki <repo>`, `2brain check <repo>`, ...).
 
 The `graph` pipeline:
 

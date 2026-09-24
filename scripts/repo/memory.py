@@ -147,10 +147,19 @@ def sync_entries(repo_path: str, *, head: str, index_revision: str) -> int:
 
 
 def write_memory_report(repo_path: str) -> Path:
-    """Render a markdown report of all durable repository memory entries."""
+    """Render a markdown report of all durable repository memory entries.
+
+    Also ensures repo-memory.json exists, even with zero entries: the state
+    file's layers.memory.artifact always points at it, and every other listed
+    artifact exists unconditionally — repo-memory.json was the one exception,
+    since until now it was only ever written by add_entry/sync_entries.
+    """
     repo = Path(repo_path)
-    report_path = _memory_report_file(repo)
     entries = load_entries(repo_path)
+    if not _memory_file(repo).exists():
+        _write_entries(repo, entries)
+
+    report_path = _memory_report_file(repo)
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines: list[str] = []
