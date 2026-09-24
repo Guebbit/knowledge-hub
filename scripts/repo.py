@@ -289,6 +289,52 @@ def _run_graphify(repo_path: str, provider: str, model: str, update: bool) -> No
             if cluster_returncode != 0:
                 die(f"graphify cluster-only exited with code {cluster_returncode}")
 
+    _neutralize_graphify_advice(repo_path)
+
+
+_GRAPH_FRESHNESS_HEADING = "## Graph Freshness"
+
+
+def _rewrite_graph_freshness_advice(text: str, repo_path: str) -> str:
+    """Rewrite graphify's own bypass-2brain advice to point at 2brain's commands.
+
+    graphify's report tells a reader to run `graphify update .` /
+    `git rev-parse HEAD` / `graphify query` directly — bypassing 2brain, and
+    worse, GRAPHIFY_OUT, so a direct `graphify update` would write a second
+    graphify-out/ at the repo root outside our managed tree. graphify is
+    pinned and ships breaking changes often, so this rewrites the rendered
+    text rather than patching graphify itself — a version bump can't break it.
+    No '## Graph Freshness' heading → left untouched.
+    """
+    if _GRAPH_FRESHNESS_HEADING not in text:
+        return text
+    return (
+        text.replace(
+            "Run `git rev-parse HEAD` and compare to check if the graph is stale.",
+            f"Run `2brain check {repo_path}` to check if the graph is stale.",
+        )
+        .replace(
+            "Run `graphify update .` after code changes (no API cost).",
+            f"Run `2brain {repo_path}` after code changes.",
+        )
+        .replace("run `graphify query`", f'run `2brain query {repo_path} "..."`')
+    )
+
+
+def _neutralize_graphify_advice(repo_path: str) -> None:
+    """Post-process GRAPH_REPORT.md in place; warn (never fail) if nothing matched."""
+    report_path = Path(repo_path) / _GRAPHIFY_OUT / "GRAPH_REPORT.md"
+    if not report_path.exists():
+        return
+    text = report_path.read_text(encoding="utf-8", errors="replace")
+    if _GRAPH_FRESHNESS_HEADING not in text:
+        print(f"Graphify : {report_path} has no '{_GRAPH_FRESHNESS_HEADING}' section — advice rewrite skipped")
+        return
+    rewritten = _rewrite_graph_freshness_advice(text, repo_path)
+    if rewritten != text:
+        report_path.write_text(rewritten, encoding="utf-8")
+        print(f"Graphify : rewrote freshness/query advice in {report_path}")
+
 
 def _repo_state_file(repo_path: str) -> Path:
     return Path(repo_path) / _STATE_FILE_SUBPATH
@@ -374,28 +420,16 @@ def _read_state(repo_path: str) -> dict[str, object] | None:
         die(f"invalid state file: {state_file}")
 
 
-def _refresh_state_layers(repo_path: str, *, pipeline: dict[str, object]) -> None:
+def _refresh_state_layers(repo_path: str, *, pipeline: dict[str, object], head: str) -> None:
     """Update the recorded layer results without advancing the graph baseline.
 
     For layers that rebuild the index but not the graph (wiki, arch). Silently
-    does nothing when there is no prior state to pin against — a run that never
-    got a baseline has nothing to preserve, and inventing one here would move
-    the baseline to HEAD, which is exactly what must not happen.
-
-    Reads the state file directly rather than via _read_state(), whose "run
-    '2brain graph' first" advice is aimed at _check() and would be misleading
-    noise in the middle of a wiki run that has already done its work.
+    does nothing when `head` is empty — a run that never got a baseline has
+    nothing to preserve, and inventing one here would move the baseline to
+    HEAD, which is exactly what must not happen.
     """
-    state_file = _repo_state_file(repo_path)
-    if not state_file.exists():
-        return
-    try:
-        prior = json.loads(state_file.read_text())
-    except json.JSONDecodeError:
-        return
-    pinned = str(prior.get("head") or "") if isinstance(prior, dict) else ""
-    if pinned:
-        _write_state(repo_path, pipeline=pipeline, head=pinned)
+    if head:
+        _write_state(repo_path, pipeline=pipeline, head=head)
 
 
 def _is_generated_path(path: str) -> bool:
@@ -572,10 +606,17 @@ def _require_pipeline_artifacts(repo_path: str) -> None:
             die(f"required artifact missing: {path}")
 
 
-def _build_layers(repo_path: str, *, provider: str, model: str, mode: str, ai_target: str) -> dict[str, object]:
+def _build_layers(
+    repo_path: str, *, provider: str, model: str, mode: str, ai_target: str, head: str
+) -> dict[str, object]:
+    """Build the memory/index/context/injection layers, all stamped with the same `head`.
+
+    `head` is always the caller's — never resolved here — so the graph run, the
+    wiki run and the arch run that follow it all stamp the same commit even when
+    real time (and possibly new commits) passes between them.
+    """
     _require_pipeline_artifacts(repo_path)
 
-    head = _resolve_head(repo_path)
     memory_report = repo_memory.write_memory_report(repo_path)
     runtime_metadata = {
         "provider": provider,
@@ -866,13 +907,14 @@ def _wiki(
     if dry_run:
         return 0
 
-    # Fold wiki pages into the semantic index and canonical context.
-    # The graph baseline must only move when graphify itself runs, otherwise
-    # --check would report a stale graph as fresh — so the head stays pinned.
-    # The layer records do get refreshed: this call just rebuilt the index, and
-    # leaving the graph layer's copy in place makes state lie about it.
-    layers = _build_layers(repo_path, provider=provider, model=model, mode="wiki", ai_target=ai_target)
-    _refresh_state_layers(repo_path, pipeline=layers)
+    # Fold wiki pages into the semantic index and canonical context, stamped
+    # with the current graph baseline (not a freshly-resolved HEAD, which may
+    # have moved since graphify ran — see _build_layers). The graph baseline
+    # itself must only move when graphify runs, so the head stays pinned; the
+    # layer records do get refreshed since this call just rebuilt the index.
+    pinned_head = _baseline_head(repo_path)
+    layers = _build_layers(repo_path, provider=provider, model=model, mode="wiki", ai_target=ai_target, head=pinned_head)
+    _refresh_state_layers(repo_path, pipeline=layers, head=pinned_head)
 
     if mirror_vault:
         # Per-file pages are machine-tier and deliberately stay out of the vault;
@@ -938,8 +980,9 @@ def _arch(
 
     # Fold the architecture pages into the semantic index and canonical context.
     # Head stays pinned, layer records are refreshed — same rule as the wiki layer.
-    layers = _build_layers(repo_path, provider=provider, model=model, mode="arch", ai_target=ai_target)
-    _refresh_state_layers(repo_path, pipeline=layers)
+    pinned_head = _baseline_head(repo_path)
+    layers = _build_layers(repo_path, provider=provider, model=model, mode="arch", ai_target=ai_target, head=pinned_head)
+    _refresh_state_layers(repo_path, pipeline=layers, head=pinned_head)
 
     if mirror_vault:
         _mirror_to_vault(repo_arch.mirror_to_vault, repo_path, label="Arch", explicit=mirror_explicit)
@@ -962,7 +1005,12 @@ def _graph(
     ai_target: str,
     update: bool,
 ) -> None:
-    """Run the graph layer: graphify + execution + memory + index + AI injection."""
+    """Run the graph layer: graphify + execution + memory + index + AI injection.
+
+    HEAD is resolved once here, before graphify runs, and threaded through to
+    every artifact this run touches — see _build_layers.
+    """
+    head = _resolve_head(repo_path)
     _run_graphify(repo_path, provider, model, update=update)
     execution_generate(repo_path)
     layers = _build_layers(
@@ -971,8 +1019,23 @@ def _graph(
         model=model,
         mode="update" if update else "extract",
         ai_target=ai_target,
+        head=head,
     )
-    _write_state(repo_path, pipeline=layers)
+    _write_state(repo_path, pipeline=layers, head=head)
+
+
+def _reindex(repo_path: str, *, provider: str, model: str, ai_target: str) -> None:
+    """Rebuild EXECUTION.md, the semantic index, context, and AI injection from existing artifacts.
+
+    EXECUTION.md is deterministic and free (pure stdlib, no graphify/LLM call),
+    so it is regenerated here too — otherwise validating an EXECUTION.md fix
+    would require a full `2brain graph` run.
+    """
+    _require_pipeline_artifacts(repo_path)
+    execution_generate(repo_path)
+    head = _resolve_head(repo_path)
+    layers = _build_layers(repo_path, provider=provider, model=model, mode="reindex", ai_target=ai_target, head=head)
+    _write_state(repo_path, pipeline=layers, head=head)
 
 
 def _all(
@@ -1254,14 +1317,13 @@ def main() -> None:
             index_revision=existing_revision,
         )
         print(f"Memory   : stored [{entry['kind']}] {entry['text']}")
-        layers = _build_layers(args.repo, provider=provider, model=model, mode="memory-update", ai_target=ai_target)
-        _write_state(args.repo, pipeline=layers)
+        head = _resolve_head(args.repo)
+        layers = _build_layers(args.repo, provider=provider, model=model, mode="memory-update", ai_target=ai_target, head=head)
+        _write_state(args.repo, pipeline=layers, head=head)
         return
 
     if args.command == "reindex":
-        _require_pipeline_artifacts(args.repo)
-        layers = _build_layers(args.repo, provider=provider, model=model, mode="reindex", ai_target=ai_target)
-        _write_state(args.repo, pipeline=layers)
+        _reindex(args.repo, provider=provider, model=model, ai_target=ai_target)
         return
 
     _graph(args.repo, provider=provider, model=model, ai_target=ai_target, update=args.update)

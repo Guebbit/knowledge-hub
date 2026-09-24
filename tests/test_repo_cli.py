@@ -9,9 +9,23 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
+
+
+def _git_commit(path: Path) -> str:
+    """Init a git repo at `path` with one commit, returning its HEAD sha."""
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
+    (path / "README.md").write_text("hello")
+    subprocess.run(["git", "add", "-A"], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "first"], cwd=path, check=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True
+    ).stdout.strip()
 
 _REPO_PY = Path(__file__).resolve().parent.parent / "scripts" / "repo.py"
 
@@ -74,30 +88,124 @@ class TestStateLayerRefresh:
         return state
 
     def test_head_stays_pinned_while_layers_refresh(self, repo_cli, tmp_path, state_repo):
-        repo_cli._refresh_state_layers(str(tmp_path), pipeline={"index": {"chunk_count": 585}})
+        repo_cli._refresh_state_layers(str(tmp_path), pipeline={"index": {"chunk_count": 585}}, head="0bafcf31")
 
         written = json.loads(state_repo.read_text())
         assert written["head"] == "0bafcf31", "the graph baseline must not move"
         assert written["layers"]["index"]["chunk_count"] == 585
 
-    def test_missing_state_is_not_invented(self, repo_cli, tmp_path, monkeypatch):
+    def test_empty_head_writes_nothing(self, repo_cli, tmp_path, monkeypatch):
         monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _: True)
 
-        repo_cli._refresh_state_layers(str(tmp_path), pipeline={"index": {}})
+        repo_cli._refresh_state_layers(str(tmp_path), pipeline={"index": {}}, head="")
 
         assert not (tmp_path / ".2brain" / ".2brain-state.json").exists(), (
             "writing a baseline here would silently move it to HEAD"
         )
 
-    def test_corrupt_state_is_left_alone(self, repo_cli, tmp_path, monkeypatch):
-        monkeypatch.setattr(repo_cli, "_in_git_repo", lambda _: True)
+
+class TestBaselineHead:
+    """_baseline_head reads the pinned graph commit without _read_state()'s chatter.
+
+    Callers (_wiki, _arch, _all) read it once and pass the same value to both
+    _build_layers (stamping) and _refresh_state_layers (pinning) — see C1.
+    """
+
+    def test_missing_state_is_empty(self, repo_cli, tmp_path):
+        assert repo_cli._baseline_head(str(tmp_path)) == ""
+
+    def test_corrupt_state_is_empty(self, repo_cli, tmp_path):
         state = tmp_path / ".2brain" / ".2brain-state.json"
         state.parent.mkdir(parents=True, exist_ok=True)
         state.write_text("{not json")
 
-        repo_cli._refresh_state_layers(str(tmp_path), pipeline={"index": {}})
+        assert repo_cli._baseline_head(str(tmp_path)) == ""
 
-        assert state.read_text() == "{not json"
+    def test_reads_the_recorded_head(self, repo_cli, tmp_path):
+        state = tmp_path / ".2brain" / ".2brain-state.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text(json.dumps({"head": "ad8d8602"}))
+
+        assert repo_cli._baseline_head(str(tmp_path)) == "ad8d8602"
+
+
+class TestBuildLayersHeadIsExplicit:
+    """C1: _build_layers no longer resolves HEAD itself — every artifact it
+    writes must stamp exactly the head the caller passes, even when the real
+    git HEAD has since moved on (e.g. an unrelated commit mid-run).
+    """
+
+    def test_stamps_the_explicit_head_not_live_git_head(self, repo_cli, tmp_path):
+        live_head = _git_commit(tmp_path)
+        fake_head = "deadbeef"
+        assert fake_head != live_head
+
+        out = tmp_path / ".2brain"
+        out.mkdir()
+        (out / "EXECUTION.md").write_text("# Execution Knowledge\n")
+
+        repo_cli._build_layers(
+            str(tmp_path), provider="ollama", model="qwen3:8b", mode="extract", ai_target="neutral", head=fake_head
+        )
+
+        context = (out / "REPO_CONTEXT.md").read_text()
+        assert f"commit `{fake_head}`" in context
+        assert live_head not in context
+
+
+_FRESHNESS_FIXTURE = """\
+## Graph Freshness
+
+- Built from commit: `ad8d8602`
+- Run `git rev-parse HEAD` and compare to check if the graph is stale.
+- Run `graphify update .` after code changes (no API cost).
+
+## Knowledge Gaps
+
+- **12 isolated node(s)** — run `graphify query` to explore isolated nodes.
+"""
+
+
+class TestGraphFreshnessAdviceRewrite:
+    """C4: graphify's own report tells the reader to bypass 2brain (and,
+    without GRAPHIFY_OUT, to write a second graphify-out/ at the repo root).
+    graphify is pinned and ships breaking changes often, so this is a text
+    rewrite on our side rather than a patch to graphify itself.
+    """
+
+    def test_rewrites_freshness_and_query_advice(self, repo_cli):
+        rewritten = repo_cli._rewrite_graph_freshness_advice(_FRESHNESS_FIXTURE, "/repo")
+
+        assert "git rev-parse HEAD" not in rewritten
+        assert "graphify update ." not in rewritten
+        assert "graphify query" not in rewritten
+        assert "2brain check /repo" in rewritten
+        assert "2brain /repo" in rewritten
+        assert "2brain query /repo" in rewritten
+
+    def test_report_without_the_heading_is_unchanged(self, repo_cli):
+        text = "# Graph Report\n\n## Summary\n\n- 5 nodes\n"
+        assert repo_cli._rewrite_graph_freshness_advice(text, "/repo") == text
+
+
+class TestReindexRegeneratesExecution:
+    """EXECUTION.md is deterministic and free, so `2brain reindex` should not
+    need a full `2brain graph` run to pick up an EXECUTION.md fix.
+    """
+
+    def test_reindex_rewrites_execution_md_from_current_repo_metadata(self, repo_cli, tmp_path):
+        _git_commit(tmp_path)
+        (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": "jest"}}))
+
+        out = tmp_path / ".2brain"
+        out.mkdir()
+        (out / "EXECUTION.md").write_text("stale placeholder\n")
+
+        repo_cli._reindex(str(tmp_path), provider="ollama", model="qwen3:8b", ai_target="neutral")
+
+        content = (out / "EXECUTION.md").read_text()
+        assert "npm run test" in content
+        assert "stale placeholder" not in content
 
 
 class TestHookOffer:

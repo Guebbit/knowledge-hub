@@ -12,13 +12,19 @@ Output:
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from shared import config
 
 _SCRIPT_KEYWORDS = ("test", "build", "lint", "start", "dev", "check", "format")
+# Priority order for _quick_commands' first pass: an exact-match canonical name
+# always makes the cap, even when dozens of `lint:*`/`check:*` variants would
+# otherwise crowd it out in file order.
+_CANONICAL_QUICK_COMMANDS = ("test", "build", "dev", "start", "lint", "format", "check", "typecheck", "ts-check")
 _MAX_WORKFLOW_RUN_COMMANDS = 12
 _MAX_MIGRATION_PATHS = 20
 _MAX_QUICK_COMMANDS = 20
@@ -26,13 +32,15 @@ _MAKEFILE_TARGET_PATTERN = re.compile(r"^([A-Za-z0-9_.-]+)\s*:(?![=])")
 _WORKFLOW_NAME_PATTERN = re.compile(r"^\s*name:\s*(.+)\s*$")
 _WORKFLOW_RUN_PATTERN = re.compile(r"^(\s*)run:\s*(.*)\s*$")
 _YAML_BLOCK_SCALAR_PATTERN = re.compile(r"^[|>][0-9]?[-+]?$")
-_MIGRATION_PATH_GLOBS = (
-    "**/alembic/versions",
-    "**/prisma/migrations",
-    "**/db/migrate",
-    "**/migrations",
-    "**/migration",
-    "**/sql/migrations",
+# Directory-path suffixes (posix, no leading slash) that count as a migration
+# directory, matched against git-tracked paths only — see _tracked_directories.
+_MIGRATION_DIR_SUFFIXES = (
+    "alembic/versions",
+    "prisma/migrations",
+    "db/migrate",
+    "migrations",
+    "migration",
+    "sql/migrations",
 )
 _MIGRATION_HINT_FILES = (
     "alembic.ini",
@@ -41,12 +49,10 @@ _MIGRATION_HINT_FILES = (
     "flyway.conf",
     "manage.py",
 )
-_COMPOSE_FILES = ("docker-compose.yml", "docker-compose.windows.yml")
-# Compose files in this project are hand-authored with a consistent 2-space
-# indent, so a line-oriented indent scan is enough to pull out what
-# EXECUTION.md needs — a full YAML parser (PyYAML) would be the only
-# dependency of its kind in this stdlib-only script.
-_COMPOSE_SERVICE_PATTERN = re.compile(r"^  ([A-Za-z0-9_.-]+):\s*$")
+# Modern and legacy compose naming, base file plus per-environment variants
+# (docker-compose.production.yml, compose.test.yaml, ...).
+_COMPOSE_GLOBS = ("compose.y*ml", "compose.*.y*ml", "docker-compose.y*ml", "docker-compose.*.y*ml")
+_COMPOSE_BASE_NAMES = ("compose.yml", "compose.yaml", "docker-compose.yml", "docker-compose.yaml")
 _COMPOSE_LIST_ITEM_PATTERN = re.compile(r"^\s*-\s*(.+?)\s*$")
 _ENV_SECTION_HEADER_PATTERN = re.compile(r"^#\s*──+\s*([A-Z][A-Z0-9 /]*[A-Z0-9])\s*──+")
 _ENV_VAR_PATTERN = re.compile(r"^([A-Z][A-Z0-9_]*)=(.*)$")
@@ -64,7 +70,9 @@ def generate(repo_path: str) -> None:
     workflows = _read_workflows(repo / ".github" / "workflows")
     migration_paths, migration_hints = _read_migrations(repo)
     compose_files = _read_compose_files(repo)
-    required_env = _read_required_env(repo / ".env-example")
+    env_example = repo / ".env-example"
+    required_env = _read_required_env(env_example)
+    env_var_count = _read_env_var_count(env_example)
 
     output.write_text(
         _render_markdown(
@@ -76,6 +84,7 @@ def generate(repo_path: str) -> None:
             migration_hints=migration_hints,
             compose_files=compose_files,
             required_env=required_env,
+            env_var_count=env_var_count,
         )
     )
     print(f"Execution: {output}")
@@ -239,38 +248,65 @@ def _read_workflows(dir_path: Path) -> list[dict[str, object]]:
     return workflows
 
 
-def _read_migrations(repo: Path) -> tuple[list[str], list[str]]:
-    """Find likely migration directories and migration-tool hint files."""
-    migration_paths: list[str] = []
-    seen_paths: set[str] = set()
-    for pattern in _MIGRATION_PATH_GLOBS:
-        for path in sorted(repo.glob(pattern)):
-            if not path.is_dir():
-                continue
-            rel = str(path.relative_to(repo))
-            if rel not in seen_paths:
-                seen_paths.add(rel)
-                migration_paths.append(rel)
-            if len(migration_paths) >= _MAX_MIGRATION_PATHS:
-                break
-        if len(migration_paths) >= _MAX_MIGRATION_PATHS:
-            break
+def _tracked_directories(repo: Path) -> set[str]:
+    """Every directory (and ancestor) containing a git-tracked file, posix-relative.
 
-    hints: list[str] = []
-    for rel in _MIGRATION_HINT_FILES:
-        hint_path = repo / rel
-        if hint_path.exists():
-            hints.append(rel)
+    `git ls-files` already respects .gitignore, so this skips node_modules/ and
+    friends for free and is far cheaper than Path.glob('**/...') over them. Falls
+    back to an os.walk that prunes the same common heavy/vcs dirs when the target
+    isn't a git repository at all.
+    """
+    result = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True, text=True)
+    if result.returncode != 0:
+        return _walked_directories(repo)
+
+    dirs: set[str] = set()
+    for line in result.stdout.splitlines():
+        parent = PurePosixPath(line).parent
+        while str(parent) != ".":
+            dirs.add(str(parent))
+            parent = parent.parent
+    return dirs
+
+
+def _walked_directories(repo: Path) -> set[str]:
+    """Fallback directory scan for a non-git target, pruning node_modules/.git/dot-dirs."""
+    dirs: set[str] = set()
+    for dirpath, dirnames, _ in os.walk(repo):
+        dirnames[:] = [d for d in dirnames if d != "node_modules" and not d.startswith(".")]
+        rel = Path(dirpath).relative_to(repo)
+        if str(rel) != ".":
+            dirs.add(rel.as_posix())
+    return dirs
+
+
+def _is_migration_dir(rel_dir: str) -> bool:
+    return any(rel_dir == suffix or rel_dir.endswith(f"/{suffix}") for suffix in _MIGRATION_DIR_SUFFIXES)
+
+
+def _read_migrations(repo: Path) -> tuple[list[str], list[str]]:
+    """Find likely migration directories (among git-tracked paths) and tool hint files."""
+    migration_paths = sorted(d for d in _tracked_directories(repo) if _is_migration_dir(d))[:_MAX_MIGRATION_PATHS]
+    hints = [rel for rel in _MIGRATION_HINT_FILES if (repo / rel).exists()]
     return migration_paths, hints
 
 
 def _read_compose_services(path: Path) -> list[dict[str, object]]:
-    """Extract service name, image/build, volumes, and depends_on from one compose file."""
+    """Extract service name, image/build, volumes, and depends_on from one compose file.
+
+    Indent-agnostic: the unit is detected from the first service line under
+    `services:` (service = 1 unit, its keys = 2 units, list items = 3+ units), so
+    2-space and 4-space compose files parse identically. A full YAML parser
+    (PyYAML) would be the only dependency of its kind in this stdlib-only script —
+    revisit only if a real repo breaks this line parser.
+    """
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     services: list[dict[str, object]] = []
     current: dict[str, object] | None = None
     current_key: str | None = None
     in_services = False
+    unit = 0
+    service_pattern: re.Pattern[str] | None = None
 
     for line in lines:
         if not line.strip() or line.lstrip().startswith("#"):
@@ -286,7 +322,11 @@ def _read_compose_services(path: Path) -> list[dict[str, object]]:
             # Back out to a top-level sibling key (volumes:, networks:, ...) — done.
             break
 
-        service_match = _COMPOSE_SERVICE_PATTERN.match(line) if indent == 2 else None
+        if service_pattern is None:
+            unit = indent
+            service_pattern = re.compile(rf"^ {{{unit}}}([A-Za-z0-9_.-]+):\s*$")
+
+        service_match = service_pattern.match(line) if indent == unit else None
         if service_match:
             current = {"name": service_match.group(1), "image": None, "build": False, "volumes": [], "depends_on": []}
             services.append(current)
@@ -295,7 +335,7 @@ def _read_compose_services(path: Path) -> list[dict[str, object]]:
         if current is None:
             continue
 
-        if indent == 4:
+        if indent == unit * 2:
             stripped = line.strip()
             if stripped == "volumes:":
                 current_key = "volumes"
@@ -311,7 +351,7 @@ def _read_compose_services(path: Path) -> list[dict[str, object]]:
                 current_key = None
             continue
 
-        if indent >= 6 and current_key in ("volumes", "depends_on"):
+        if indent >= unit * 3 and current_key in ("volumes", "depends_on"):
             item_match = _COMPOSE_LIST_ITEM_PATTERN.match(line)
             if item_match:
                 current[current_key].append(item_match.group(1))
@@ -319,15 +359,17 @@ def _read_compose_services(path: Path) -> list[dict[str, object]]:
     return services
 
 
+def _discover_compose_files(repo: Path) -> list[str]:
+    """Find every compose file at the repo root: base file(s) first, then variants alphabetically."""
+    found = {path.name for pattern in _COMPOSE_GLOBS for path in repo.glob(pattern) if path.is_file()}
+    base = sorted(name for name in found if name in _COMPOSE_BASE_NAMES)
+    variants = sorted(name for name in found if name not in _COMPOSE_BASE_NAMES)
+    return base + variants
+
+
 def _read_compose_files(repo: Path) -> list[dict[str, object]]:
-    """Read every known compose file present, so multi-platform setups are all documented."""
-    files: list[dict[str, object]] = []
-    for name in _COMPOSE_FILES:
-        path = repo / name
-        if not path.exists():
-            continue
-        files.append({"file": name, "services": _read_compose_services(path)})
-    return files
+    """Read every compose file present, so multi-environment setups are all documented."""
+    return [{"file": name, "services": _read_compose_services(repo / name)} for name in _discover_compose_files(repo)]
 
 
 def _read_required_env(path: Path) -> list[tuple[str, str]]:
@@ -355,38 +397,62 @@ def _read_required_env(path: Path) -> list[tuple[str, str]]:
     return required
 
 
+def _read_env_var_count(path: Path) -> int:
+    """Count every VAR=value assignment in .env-example, regardless of section.
+
+    Backs the fallback pointer line for repos with no REQUIRED-section
+    convention: a raw count is honest, guessing which vars are required is not.
+    """
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if _ENV_VAR_PATTERN.match(line.strip()))
+
+
+def _pyproject_command(name: str) -> str:
+    return f"poe {name.removeprefix('poe:')}" if name.startswith("poe:") else name
+
+
 def _quick_commands(
     package_scripts: dict[str, str],
     make_targets: list[str],
     pyproject_scripts: dict[str, str],
 ) -> list[str]:
-    """Build a short, deduplicated list of likely day-to-day project commands."""
+    """Build a short, deduplicated list of likely day-to-day project commands.
+
+    Two passes so `test` always makes the cap even when dozens of `lint:*`/
+    `check:*` scripts sort ahead of it in file order: canonical names are
+    collected first, in a fixed priority order, then everything else in file
+    order until the same cap.
+    """
     commands: list[str] = []
     seen: set[str] = set()
 
-    for name in package_scripts:
-        if _matches_script_keyword(name):
-            cmd = f"npm run {name}"
-            if cmd not in seen:
-                seen.add(cmd)
-                commands.append(cmd)
-
-    for target in make_targets:
-        if _matches_script_keyword(target):
-            cmd = f"make {target}"
-            if cmd not in seen:
-                seen.add(cmd)
-                commands.append(cmd)
-
-    for name in pyproject_scripts:
-        if name.startswith("poe:"):
-            cmd = f"poe {name.removeprefix('poe:')}"
-        else:
-            cmd = name
-        if _matches_script_keyword(name) and cmd not in seen:
+    def _add(cmd: str) -> None:
+        if cmd not in seen and len(commands) < _MAX_QUICK_COMMANDS:
             seen.add(cmd)
             commands.append(cmd)
-    return commands[:_MAX_QUICK_COMMANDS]
+
+    for canonical in _CANONICAL_QUICK_COMMANDS:
+        if canonical in package_scripts:
+            _add(f"npm run {canonical}")
+        if canonical in make_targets:
+            _add(f"make {canonical}")
+        if canonical in pyproject_scripts:
+            _add(_pyproject_command(canonical))
+        elif f"poe:{canonical}" in pyproject_scripts:
+            _add(_pyproject_command(f"poe:{canonical}"))
+
+    for name in package_scripts:
+        if _matches_script_keyword(name):
+            _add(f"npm run {name}")
+    for target in make_targets:
+        if _matches_script_keyword(target):
+            _add(f"make {target}")
+    for name in pyproject_scripts:
+        if _matches_script_keyword(name):
+            _add(_pyproject_command(name))
+
+    return commands
 
 
 def _render_markdown(
@@ -399,6 +465,7 @@ def _render_markdown(
     migration_hints: list[str],
     compose_files: list[dict[str, object]],
     required_env: list[tuple[str, str]],
+    env_var_count: int,
 ) -> str:
     """Render extracted execution metadata into EXECUTION.md markdown."""
     lines: list[str] = []
@@ -409,10 +476,6 @@ def _render_markdown(
 
     if compose_files:
         lines.append("## Container Runtime")
-        lines.append(
-            "Everything here runs through `docker compose` / `podman compose` — there is no "
-            "bare-metal `pip install` path for the pipeline itself."
-        )
         for entry in compose_files:
             file_name = str(entry["file"])
             services = entry["services"]
@@ -429,30 +492,17 @@ def _render_markdown(
                     for volume in service["volumes"]:
                         lines.append(f"    - `{volume}`")
             lines.append("")
-            lines.append(
-                f"Run pattern: `docker compose -f {file_name} run --rm <service> <command>` "
-                "(or `podman compose`, per `CONTAINER_ENGINE` in `.env`) — this is the actual "
-                "entry point, not a direct interpreter invocation."
-            )
-        if len(compose_files) > 1:
-            lines.append("")
-            lines.append(
-                f"Platform variants: `{_COMPOSE_FILES[1]}` is standalone (does not merge with "
-                f"`{_COMPOSE_FILES[0]}`) — it is the CPU/Windows definition, used directly via `-f`, "
-                "not as a compose override."
-            )
-        lines.append("")
-        lines.append(
-            "Exception: the `2brain` CLI wrapper runs `query` and `check` directly on the host "
-            "(pure stdlib, no container) unless `--host`/`--container` or `REPO_MODE` forces "
-            "otherwise — every other subcommand still goes through the pattern above."
-        )
+            lines.append(f"Run pattern: `docker compose -f {file_name} run --rm <service> <command>`")
         lines.append("")
 
     if required_env:
         lines.append("## Required Environment (.env-example)")
         for var, default in required_env:
             lines.append(f"- `{var}={default}`" if default else f"- `{var}`")
+        lines.append("")
+    elif env_var_count:
+        lines.append("## Required Environment (.env-example)")
+        lines.append(f"- `.env-example` defines {env_var_count} variables — copy it to `.env`.")
         lines.append("")
 
     quick = _quick_commands(package_scripts, make_targets, pyproject_scripts)

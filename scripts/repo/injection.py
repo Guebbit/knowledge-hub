@@ -20,6 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from repo import memory as repo_memory
+from repo.vault import repo_display_name
 from shared import config
 
 _MARKER_START = "<!-- 2brain:start — regenerate with: 2brain <repo-path> -->"
@@ -87,11 +88,20 @@ def _probe_artifacts(repo: Path) -> list[tuple[str, str]]:
 
 
 def _freshness_note(head: str) -> str:
+    """Per-file freshness rule, not a HEAD comparison.
+
+    Committing the artifacts moves HEAD, so a HEAD-vs-stamp comparison would
+    fire on every session after the first commit — always false, never useful.
+    A diff of one file against the pinned baseline is exact regardless of how
+    many artifact-only commits happened since, because it ignores them.
+    """
     if not head:
         return ""
     return (
-        f"Artifacts generated from commit `{head}`. If `git rev-parse HEAD` differs, "
-        "prefer the source over these artifacts and say so."
+        f"Artifacts describe commit `{head}`. Before relying on a wiki page, check its "
+        f"source: `git diff --quiet {head} -- <file>` (and `git status` for uncommitted "
+        "edits). Changed → prefer the source for that file and say so. Unchanged → trust "
+        "the page."
     )
 
 
@@ -105,6 +115,13 @@ def _routing_rules(repo: Path, *, head: str) -> str:
     """
     present = {path for path, _ in _probe_artifacts(repo)}
     rules: list[str] = []
+    overview_path = f"{_OUT}/llm-wiki/OVERVIEW.md"
+    module_index_path = f"{_OUT}/modules/{repo_display_name(str(repo))}_INDEX.md"
+    if (repo / overview_path).exists() and (repo / module_index_path).exists():
+        rules.append(
+            "- **First contact with an unfamiliar codebase** → "
+            f"`{overview_path}` for orientation, then `{module_index_path}` for the module map."
+        )
     if any(path.startswith(f"{_OUT}/llm-wiki/") for path in present):
         rules.append(
             "- **Editing or reading a source file** → read "
@@ -119,11 +136,6 @@ def _routing_rules(repo: Path, *, head: str) -> str:
         )
     if f"{_OUT}/EXECUTION.md" in present:
         rules.append(f'- **"How do I run / build / test / deploy this?"** → `{_OUT}/EXECUTION.md`.')
-    if any(path.endswith("GRAPH_REPORT.md") for path in present):
-        rules.append(
-            "- **First contact with an unfamiliar large codebase** → "
-            f"`{config.GRAPHIFY_OUT}/GRAPH_REPORT.md` for structural orientation."
-        )
     rules.append(
         '- **Anything else, or you don\'t know which file** → `2brain query <repo-path> "question"`.'
     )
@@ -134,21 +146,72 @@ def _routing_rules(repo: Path, *, head: str) -> str:
     return "\n".join(rules)
 
 
-def _claude_inline(repo: Path, *, head: str) -> str:
-    """Managed CLAUDE.md block: an @-import plus routing rules for what it points to.
+_MAX_INLINED_GOD_NODES = 10
+_GOD_NODE_PATTERN = re.compile(r"^\d+\.\s+`([^`]+)`\s*-\s*(\d+)\s*edges?", re.MULTILINE)
+_HYPEREDGE_TITLE_PATTERN = re.compile(r"^-\s+\*\*(.+?)\*\*\s+—", re.MULTILINE)
 
-    Claude Code auto-loads CLAUDE.md and resolves @-imports, so the import is
-    what actually puts REPO_CONTEXT.md in context. REPO_CONTEXT.md then only
-    *names* the other artifacts — they are backticked paths, not imports — so
-    without trigger conditions below, Claude sees a list of filenames and no
-    reason to open any of them. Copilot and Cursor get the same directive.
+
+def _report_section(report_text: str, heading_prefix: str) -> str | None:
+    """Body lines of the first '## <heading_prefix>...' section in report_text, or None."""
+    lines = report_text.splitlines()
+    start = next((i + 1 for i, line in enumerate(lines) if line.startswith(f"## {heading_prefix}")), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def _graph_report_highlights(repo: Path) -> str:
+    """Inline GRAPH_REPORT.md's two durable-value sections into REPO_CONTEXT.md.
+
+    GRAPH_REPORT is dropped from routing (its communities/questions are noise
+    below graphify's own clustering threshold — see repo.py's
+    _GRAPH_CLUSTER_MIN_NODES), but god nodes and hyperedges are worth a reader's
+    attention regardless of graph size, so they are parsed out and inlined
+    here. A missing report, or a missing section within it, silently omits
+    that block rather than erroring — the report itself still exists and is
+    still indexed by `query`.
     """
+    report_path = repo / config.GRAPHIFY_OUT / "GRAPH_REPORT.md"
+    if not report_path.exists():
+        return ""
+    text = report_path.read_text(encoding="utf-8", errors="replace")
+
+    blocks: list[str] = []
+    god_nodes = _report_section(text, "God Nodes")
+    if god_nodes:
+        matches = _GOD_NODE_PATTERN.findall(god_nodes)[:_MAX_INLINED_GOD_NODES]
+        if matches:
+            blocks.append("## Most-used code")
+            blocks.append("Change these with care — widely depended on:")
+            blocks.extend(f"- `{name}` ({edges} edges)" for name, edges in matches)
+
+    hyperedges = _report_section(text, "Hyperedges")
+    if hyperedges:
+        titles = _HYPEREDGE_TITLE_PATTERN.findall(hyperedges)
+        if titles:
+            if blocks:
+                blocks.append("")
+            blocks.append("## Cross-cutting flows")
+            blocks.extend(f"- {title}" for title in titles)
+
+    return "\n".join(blocks)
+
+
+def _claude_inline(repo: Path, *, head: str) -> str:
+    """Managed CLAUDE.md block: an @-import only.
+
+    Claude Code auto-loads CLAUDE.md and resolves @-imports, so the import
+    alone puts REPO_CONTEXT.md — including its own "## Where to look" section —
+    in context. Repeating the routing rules here would just be the same text
+    read twice. Copilot and Cursor cannot import, so _copilot_inline and
+    _cursor_rule keep them inline.
+    """
+    del repo, head  # unused: no inline routing rules to build here, unlike the other targets
     return (
         f"{_MARKER_START}\n"
         "Use the repository context generated by 2brain before proposing changes.\n"
-        f"@{_PRIMARY_CONTEXT_PATH}\n\n"
-        "## Where to look\n\n"
-        f"{_routing_rules(repo, head=head)}\n"
+        f"@{_PRIMARY_CONTEXT_PATH}\n"
         f"{_MARKER_END}"
     )
 
@@ -467,6 +530,10 @@ def write_repo_context(
     lines.append("")
     lines.append(_routing_rules(repo, head=head))
     lines.append("")
+    highlights = _graph_report_highlights(repo)
+    if highlights:
+        lines.append(highlights)
+        lines.append("")
     lines.append("## Index Metadata")
     lines.append(f"- Provider: `{provider}`")
     lines.append(f"- Model: `{model}`")

@@ -79,3 +79,14 @@ sharp(buffer).resize(1200, 630, { fit: 'contain', background: '#00000000' })
 
 All of it ADHD-friendly: short lines, one idea per line, plain language, the "why" before the
 "how". No paragraphs, no restating the code.
+
+## Running this repo
+
+- Everything here runs through `docker compose` / `podman compose` — there is no bare-metal
+  `pip install` path for the pipeline itself.
+- Exception: the `2brain` CLI wrapper runs `query` and `check` directly on the host (pure
+  stdlib, no container) unless `--host`/`--container` or `REPO_MODE` forces otherwise — every
+  other subcommand goes through compose.
+- `docker-compose.windows.yml` is standalone (does not merge with `docker-compose.yml`) — it is
+  the CPU/Windows definition, used directly via `-f`, not as a compose override.
+- `CONTAINER_ENGINE` in `.env` picks `docker` or `podman` for the `compose` wrapper.
