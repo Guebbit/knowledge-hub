@@ -58,6 +58,10 @@ _CACHE_FILENAME = ".modules-cache.json"
 _INDEX_FILENAME = "INDEX.md"
 _ROOT_MODULE = ""
 _ROOT_PAGE_NAME = "ROOT"
+# A module's own tests belong in its note, not as a competing sibling module
+# (M2) — and where a top-level tests/ tree does become its own module, it
+# should merge away before any domain module loses its slot to it (M1).
+_TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__"})
 
 # Splitting thresholds. A directory becomes its own module when its subtree holds
 # at most _MAX_FILES_PER_MODULE files; bigger subtrees are split into their
@@ -146,7 +150,24 @@ def _parent(directory: str) -> str:
 
 
 def _directory_of(rel_path: str) -> str:
+    """Directory a file counts toward for module grouping.
+
+    A NESTED tests/, test/ or __tests__/ directory folds into its parent
+    (M2): `src/modules/account/tests/unit/x.test.ts` counts toward
+    `src/modules/account`, not a competing `.../tests` module of its own — a
+    module's tests belong in its note. A top-level tests/ tree (no parent to
+    fold into) is unaffected here; the merge-order rule handles it instead (M1).
+    """
+    parts = rel_path.split("/")
+    for i, part in enumerate(parts[:-1]):
+        if part in _TEST_DIR_NAMES and i > 0:
+            return "/".join(parts[:i])
     return rel_path.rpartition("/")[0] if "/" in rel_path else _ROOT_MODULE
+
+
+def _is_test_tree(module: str) -> bool:
+    """True for a module rooted in a top-level tests/ directory (post-M2 fold)."""
+    return bool(module) and module.split("/", 1)[0] in _TEST_DIR_NAMES
 
 
 def select_modules(files: list[str]) -> dict[str, list[str]]:
@@ -154,8 +175,11 @@ def select_modules(files: list[str]) -> dict[str, list[str]]:
 
     Top-down: a directory whose whole subtree fits in _MAX_FILES_PER_MODULE
     becomes one module; anything larger is split into its children, with files
-    sitting directly in the split directory kept as a module of their own. The
-    result is then merged upward until it fits _MAX_MODULES.
+    sitting directly in the split directory kept as a module of their own.
+    Nested tests/ directories fold into their parent first (_directory_of, M2),
+    so a module's own tests never compete with it for a slot. The result is
+    then merged upward until it fits _MAX_MODULES, top-level test trees first
+    however large (M1), so domain modules are what gets merged away last.
     """
     if not files:
         return {}
@@ -202,7 +226,22 @@ def select_modules(files: list[str]) -> dict[str, list[str]]:
         mergeable = [m for m in grouped if m != _ROOT_MODULE]
         if not mergeable:
             break
-        smallest = min(mergeable, key=lambda m: (len(grouped[m]), m))
+        # Test trees merge first, however large, so domain modules never lose
+        # their slot to one (M1) — is_test_tree sorts before size before name.
+        # Within the test tier, a merge that stays inside it (tests/support ->
+        # tests) goes before one that would promote a node out to a non-test
+        # parent (tests -> ROOT) — otherwise the smallest surviving test node
+        # keeps winning ties and escapes to ROOT before its siblings converge,
+        # scattering test content into the repo-root note instead of one place.
+        smallest = min(
+            mergeable,
+            key=lambda m: (
+                0 if _is_test_tree(m) else 1,
+                0 if _is_test_tree(m) and _is_test_tree(_parent(m)) else 1,
+                len(grouped[m]),
+                m,
+            ),
+        )
         selected.discard(smallest)
         selected.add(_parent(smallest))
         merged = _assign(files, selected)
@@ -310,8 +349,13 @@ def _mermaid_overview(grouped: dict[str, list[str]], linked: dict[str, set[str]]
     global graph view. Edges are undirected (`---`): the dependency graph is
     symmetrised when it is lifted to module level, so an arrow would imply a
     direction the data no longer carries.
+
+    ROOT is excluded from these edges (M3): package.json/tsconfig.json/etc.
+    are referenced by nearly every module, which is true but content-free
+    clutter in a map meant to show real structure. ROOT keeps its own note
+    and file list — only its edges are dropped here.
     """
-    edges = _edge_pairs(linked)
+    edges = [pair for pair in _edge_pairs(linked) if _ROOT_MODULE not in pair]
     dropped = 0
     if len(edges) > _MAX_DIAGRAM_EDGES:
         # Keep the edges that carry the most structure: rank by the summed degree
@@ -338,9 +382,14 @@ def _mermaid_local(module: str, linked: dict[str, set[str]], grouped: dict[str, 
 
     A whole-repo picture answers 'how is this organised'; this one answers 'what
     does this touch', which is the question you actually have while reading a
-    module.
+    module. ROOT is excluded from every OTHER module's diagram (M3) — it links
+    to nearly everything, which is true but content-free clutter here. ROOT's
+    own diagram (module == ROOT) is unaffected, and still shows what it links to.
     """
-    neighbours = sorted(linked.get(module, set()))[:_MAX_LINKS_IN_NOTE]
+    candidates = linked.get(module, set())
+    if module != _ROOT_MODULE:
+        candidates = {m for m in candidates if m != _ROOT_MODULE}
+    neighbours = sorted(candidates)[:_MAX_LINKS_IN_NOTE]
     if not neighbours:
         return ""
     lines = ["```mermaid", "flowchart LR"]

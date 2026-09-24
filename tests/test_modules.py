@@ -142,3 +142,122 @@ class TestMermaid:
 
     def test_local_diagram_is_empty_for_an_isolated_module(self):
         assert modules._mermaid_local("a", {"a": set()}, {"a": []}) == ""
+
+
+class TestFoldColocatedTests:
+    """M2: a module's own tests belong in its note, not a competing sibling
+    module — src/modules/account/tests/** must count toward src/modules/account.
+    """
+
+    def test_nested_tests_dir_folds_into_its_parent(self):
+        assert modules._directory_of("src/modules/account/tests/unit/two-factor.test.ts") == "src/modules/account"
+
+    def test_nested_test_singular_and_dunder_also_fold(self):
+        assert modules._directory_of("src/modules/orders/test/order.test.ts") == "src/modules/orders"
+        assert modules._directory_of("src/modules/orders/__tests__/order.test.ts") == "src/modules/orders"
+
+    def test_top_level_tests_tree_is_unaffected(self):
+        """No parent to fold into — this is M1's job, not M2's."""
+        assert modules._directory_of("tests/unit/infrastructure/adapters/x.test.ts") == "tests/unit/infrastructure/adapters"
+
+    def test_a_deeper_nested_tests_dir_still_folds(self):
+        assert modules._directory_of("src/modules/account/controllers/tests/x.test.ts") == "src/modules/account/controllers"
+
+    def test_colocated_tests_land_in_the_parent_module(self):
+        # A large sibling forces a real top-down split, so account's own subtree
+        # (small on its own) isn't just absorbed whole into an even bigger parent.
+        files = _files(
+            {"src/modules/account": 5, "src/modules/account/tests": 8, "docs": modules._MAX_FILES_PER_MODULE + 1}
+        )
+        grouped = modules.select_modules(files)
+
+        account_files = [f for f in files if f.startswith("src/modules/account")]
+        owning = {module for module, members in grouped.items() if any(f in members for f in account_files)}
+
+        assert len(owning) == 1, "code and its co-located tests must land in the same module"
+        assert not modules._is_test_tree(next(iter(owning)))
+
+
+class TestTestTreesMergeFirst:
+    """M1: the merge loop's key is (is_test_tree, size, name) — test trees merge
+    away however large, before any domain module loses its slot to one.
+    """
+
+    def test_is_test_tree_detects_top_level_test_roots(self):
+        assert modules._is_test_tree("tests") is True
+        assert modules._is_test_tree("tests/unit") is True
+        assert modules._is_test_tree("test/unit") is True
+        assert modules._is_test_tree("__tests__/unit") is True
+        assert modules._is_test_tree("src/modules/account") is False
+        assert modules._is_test_tree("") is False
+
+    def test_boilerplate_shaped_repo_keeps_domain_modules_and_merges_test_trees_first(self):
+        """27 domain modules (216 files) + a tests/ tree big enough to split into
+        4 sub-modules of its own (unit/infrastructure nesting, integration,
+        cross-cutting, support) — 31 modules total, one over cap. The one
+        needed merge must come from the test side; every domain module keeps
+        its own note.
+        """
+        spec: dict[str, int] = {}
+        for i in range(27):
+            spec[f"src/modules/d{i}"] = 8
+        spec["tests/unit"] = 15
+        spec["tests/unit/infrastructure/adapters"] = 12
+        spec["tests/unit/infrastructure/http"] = 10
+        spec["tests/integration"] = 14
+        spec["tests/cross-cutting"] = 8
+        spec["tests/support"] = 6
+        files = _files(spec)
+
+        grouped = modules.select_modules(files)
+
+        assert len(grouped) <= modules._MAX_MODULES
+        for i in range(27):
+            assert f"src/modules/d{i}" in grouped, f"domain module d{i} lost its slot"
+        assert sum(1 for m in grouped if modules._is_test_tree(m)) < 4, "at least one test module must have merged"
+
+
+class TestRootEdgesDroppedFromDiagrams:
+    """M3: ROOT links to nearly everything (package.json, tsconfig.json, ...) —
+    true, but clutter. It keeps its note and file list; only diagram edges drop.
+    """
+
+    def test_root_never_appears_in_an_overview_edge(self):
+        grouped = {modules._ROOT_MODULE: ["package.json"], "src": ["src/a.ts"], "docs": ["docs/b.md"]}
+        linked = {
+            modules._ROOT_MODULE: {"src", "docs"},
+            "src": {modules._ROOT_MODULE},
+            "docs": {modules._ROOT_MODULE},
+        }
+
+        diagram = modules._mermaid_overview(grouped, linked)
+
+        root_id = modules._mermaid_id(modules._ROOT_MODULE)
+        assert f"{modules._mermaid_id('src')} --- {root_id}" not in diagram
+        assert f"{root_id} --- {modules._mermaid_id('src')}" not in diagram
+        assert " --- " not in diagram  # every edge here touches ROOT, so none survive
+
+    def test_root_still_gets_a_node_in_the_overview(self):
+        grouped = {modules._ROOT_MODULE: ["package.json"], "src": ["src/a.ts"]}
+        linked = {modules._ROOT_MODULE: {"src"}, "src": {modules._ROOT_MODULE}}
+
+        diagram = modules._mermaid_overview(grouped, linked)
+
+        assert modules._mermaid_id(modules._ROOT_MODULE) in diagram
+
+    def test_root_is_excluded_from_another_modules_local_diagram(self):
+        linked = {"src": {modules._ROOT_MODULE, "docs"}, modules._ROOT_MODULE: {"src"}, "docs": {"src"}}
+        grouped = {"src": ["src/a.ts"], modules._ROOT_MODULE: ["package.json"], "docs": ["docs/b.md"]}
+
+        diagram = modules._mermaid_local("src", linked, grouped)
+
+        assert modules._mermaid_id(modules._ROOT_MODULE) not in diagram
+        assert modules._mermaid_id("docs") in diagram
+
+    def test_roots_own_local_diagram_still_shows_its_links(self):
+        linked = {modules._ROOT_MODULE: {"src"}, "src": {modules._ROOT_MODULE}}
+        grouped = {modules._ROOT_MODULE: ["package.json"], "src": ["src/a.ts"]}
+
+        diagram = modules._mermaid_local(modules._ROOT_MODULE, linked, grouped)
+
+        assert modules._mermaid_id("src") in diagram
