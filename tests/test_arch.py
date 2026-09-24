@@ -88,6 +88,54 @@ class TestContextWindow:
         assert arch._read_chunk_lines(4096) == 60  # never below a function's worth
 
 
+class TestEstimatedDuration:
+    """A1: no up-front estimate meant a local-model run could eat the whole
+    server window with no warning. The estimate is file_count * seconds/file,
+    falling back to a conservative default on a first run.
+    """
+
+    def test_prior_rate_drives_the_estimate(self):
+        assert arch._estimated_seconds(100, 2.0) == 200.0
+
+    def test_no_prior_rate_uses_the_conservative_default(self):
+        assert arch._estimated_seconds(100, None) == 100 * arch._DEFAULT_SECONDS_PER_FILE
+
+    def test_zero_files_is_zero_seconds(self):
+        assert arch._estimated_seconds(0, 5.0) == 0.0
+
+    def test_print_estimate_names_its_source(self, capsys):
+        arch._print_estimate(10, 3.0)
+        assert "last recorded rate" in capsys.readouterr().out
+
+        arch._print_estimate(10, None)
+        assert "conservative default" in capsys.readouterr().out
+
+
+# A real "Token Usage" line from a boilerplate arch run's log
+# (.codeboarding/logs/*.log), to keep the parser honest against the actual format.
+_REAL_STEP_LOG_LINE = (
+    "2026-09-23 20:44:57 INFO     [monitoring:62] Token Usage: step=_step_llm_analysis "
+    'model=qwen3.8:27b usage={"input_tokens": 2610, "output_tokens": 1957, "total_tokens": 4567}\n'
+)
+
+
+class TestParseStep:
+    """6.4: a terse progress line needs a step marker to count — CodeBoarding's
+    own log is the only source, so the parser is pinned to a real line from it.
+    """
+
+    def test_extracts_the_step_name_from_a_real_log_line(self):
+        assert arch._parse_step(_REAL_STEP_LOG_LINE) == "_step_llm_analysis"
+
+    def test_other_named_steps_are_extracted_too(self):
+        line = "... Token Usage: step=_step_api_surfaces model=x usage={}\n"
+        assert arch._parse_step(line) == "_step_api_surfaces"
+
+    def test_unrelated_lines_yield_none(self):
+        assert arch._parse_step("Modules  : [3/30] tests/unit/  (17 files)\n") is None
+        assert arch._parse_step("") is None
+
+
 class TestRequiresFullAnalysis:
     """CodeBoarding can abort an incremental run (e.g. an engine-version-incompatible
     static-analysis cache) and still exit 0, signalling failure only via this

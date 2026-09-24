@@ -40,10 +40,14 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
+from repo import llm_wiki as repo_llm_wiki
+from repo import scope as repo_scope
 from repo.vault import mirror_markdown_tree, repo_display_name
 from shared import config
+from shared.progress import format_duration
 
 _ARCH_SUBPATH = Path(config.OUT_DIR) / "arch"
 _CODEBOARDING_SUBPATH = Path(".codeboarding")
@@ -142,6 +146,43 @@ def _codeboarding_dir(repo_path: str) -> Path:
 def _has_baseline(repo_path: str) -> bool:
     cb_dir = _codeboarding_dir(repo_path)
     return (cb_dir / _BASELINE_FILENAME).is_file() and (cb_dir / _FINGERPRINT_FILENAME).is_file()
+
+
+# First-run fallback when no prior rate is recorded yet: boilerplate's own
+# first full run took ~2h over ~1030 in-scope files (~7s/file). Conservative
+# on purpose — an underestimate is a worse surprise than an overestimate.
+_DEFAULT_SECONDS_PER_FILE = 7.0
+
+
+def _count_candidate_files(repo_path: str) -> int:
+    """Count of files 2brain considers in scope — the same set the wiki documents.
+
+    CodeBoarding does its own static analysis over the whole repo rather than
+    reading this exact set, so this is a proxy, not what it will actually
+    read. Good enough for a rough estimate: the recorded rate (real seconds
+    spent / this same count, see repo.py's _arch) self-corrects next run
+    regardless of how good the proxy is.
+    """
+    try:
+        graph_files, adjacency = repo_llm_wiki.load_graph(repo_path)
+    except FileNotFoundError:
+        return 0
+    graph_files.update(adjacency)
+    scope = repo_scope.load(repo_path)
+    repo = Path(repo_path)
+    return sum(1 for rel in graph_files if repo_llm_wiki.is_documentable(repo, rel, scope))
+
+
+def _estimated_seconds(file_count: int, prior_rate: float | None) -> float:
+    return file_count * (prior_rate or _DEFAULT_SECONDS_PER_FILE)
+
+
+def _print_estimate(file_count: int, prior_rate: float | None) -> float:
+    """Print the file count + duration estimate and return the estimated seconds."""
+    estimate = _estimated_seconds(file_count, prior_rate)
+    source = "last recorded rate" if prior_rate else "conservative default — no prior run recorded"
+    print(f"Arch     : {file_count} files — estimated {format_duration(estimate)} ({source})")
+    return estimate
 
 
 def _provider_env(provider: str, model: str) -> dict[str, str]:
@@ -316,7 +357,24 @@ def _requires_full_analysis(output: str) -> bool:
     return bool(_REQUIRES_FULL_ANALYSIS_RE.search(output))
 
 
-def _run_codeboarding_once(cmd: list[str], repo_path: str, env: dict[str, str]) -> tuple[int, str]:
+_STEP_LOG_PATTERN = re.compile(r"Token Usage: step=(\S+)")
+_PROGRESS_PRINT_EVERY = 10  # steps between our own summary lines, on top of CodeBoarding's own
+
+
+def _parse_step(line: str) -> str | None:
+    """Extract the step name from one of CodeBoarding's own 'Token Usage: step=X ...' log lines.
+
+    Its own CLI output is already verbose (module/page counters); this adds a
+    terser, our-format line periodically so a long run doesn't look hung
+    between CodeBoarding's own chattier updates.
+    """
+    match = _STEP_LOG_PATTERN.search(line)
+    return match.group(1) if match else None
+
+
+def _run_codeboarding_once(
+    cmd: list[str], repo_path: str, env: dict[str, str], *, estimated_seconds: float | None = None
+) -> tuple[int, str]:
     """Run one codeboarding subprocess, streaming its output live while also capturing it.
 
     Live streaming matters: a run can take many minutes and CodeBoarding prints its own
@@ -327,14 +385,26 @@ def _run_codeboarding_once(cmd: list[str], repo_path: str, env: dict[str, str]) 
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
     )
     lines: list[str] = []
+    steps = 0
+    start = time.monotonic()
     assert proc.stdout is not None
     for line in proc.stdout:
         print(line, end="")
         lines.append(line)
+        if _parse_step(line):
+            steps += 1
+            if steps % _PROGRESS_PRINT_EVERY == 0:
+                elapsed = time.monotonic() - start
+                eta = ""
+                if estimated_seconds and estimated_seconds > elapsed:
+                    eta = f" · ~{format_duration(estimated_seconds - elapsed)} left"
+                print(f"Arch     : {steps} steps done · {format_duration(elapsed)} elapsed{eta}", flush=True)
     return proc.wait(), "".join(lines)
 
 
-def _run_codeboarding(repo_path: str, *, provider: str, model: str, incremental: bool) -> str:
+def _run_codeboarding(
+    repo_path: str, *, provider: str, model: str, incremental: bool, estimated_seconds: float | None = None
+) -> str:
     """Invoke the CodeBoarding CLI (the only place that knows the tool's interface).
 
     Writes native output to <repo>/.codeboarding/ (analysis.json baseline), then
@@ -348,7 +418,7 @@ def _run_codeboarding(repo_path: str, *, provider: str, model: str, incremental:
     # writes analysis.json only; Markdown is rendered by _render_markdown below.
     cmd = ["codeboarding", mode, "--local", repo_path]
     print(f"Arch     : codeboarding {mode}  provider={provider}  model={model}")
-    returncode, output = _run_codeboarding_once(cmd, repo_path, env)
+    returncode, output = _run_codeboarding_once(cmd, repo_path, env, estimated_seconds=estimated_seconds)
 
     if incremental and _requires_full_analysis(output):
         print(
@@ -357,7 +427,7 @@ def _run_codeboarding(repo_path: str, *, provider: str, model: str, incremental:
         )
         mode = "full"
         cmd = ["codeboarding", mode, "--local", repo_path]
-        returncode, output = _run_codeboarding_once(cmd, repo_path, env)
+        returncode, output = _run_codeboarding_once(cmd, repo_path, env, estimated_seconds=estimated_seconds)
 
     if returncode != 0:
         raise RuntimeError(
@@ -459,13 +529,17 @@ def generate(
     model: str,
     force_all: bool = False,
     dry_run: bool = False,
+    prior_rate: float | None = None,
 ) -> dict[str, object]:
     """Generate/update the architecture layer and return a summary.
 
     Uses CodeBoarding's incremental mode when a baseline exists (cheap), falling
-    back to a full analysis otherwise or when force_all is set.
+    back to a full analysis otherwise or when force_all is set. `prior_rate`
+    (seconds/file from the last recorded run, see repo.py's _arch_rate) drives
+    the up-front duration estimate; None falls back to a conservative default.
     """
     incremental = _has_baseline(repo_path) and not force_all
+    file_count = _count_candidate_files(repo_path)
 
     if dry_run:
         mode = "incremental" if incremental else "full"
@@ -474,11 +548,20 @@ def generate(
             else ("--force-all" if force_all else "no baseline yet")
         )
         print(f"Arch     : would run codeboarding {mode} ({reason}) — no LLM calls made")
-        return {"artifact": str(_ARCH_SUBPATH), "dry_run": True, "mode": mode}
+        estimate = _print_estimate(file_count, prior_rate)
+        return {
+            "artifact": str(_ARCH_SUBPATH), "dry_run": True, "mode": mode,
+            "file_count": file_count, "estimated_seconds": estimate,
+        }
 
+    estimate = _print_estimate(file_count, prior_rate)
+    start = time.monotonic()
     # May run "full" even when incremental was requested — see _run_codeboarding's
     # stale-baseline fallback — so the summary reflects what actually ran.
-    mode = _run_codeboarding(repo_path, provider=provider, model=model, incremental=incremental)
+    mode = _run_codeboarding(
+        repo_path, provider=provider, model=model, incremental=incremental, estimated_seconds=estimate
+    )
+    elapsed = time.monotonic() - start
 
     written, removed = _mirror_pages(repo_path)
     if not written:
@@ -498,6 +581,8 @@ def generate(
         "written": written,
         "removed": removed,
         "page_count": len(written),
+        "file_count": file_count,
+        "elapsed_seconds": round(elapsed, 1),
     }
 
 

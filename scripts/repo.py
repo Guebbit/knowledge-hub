@@ -1097,6 +1097,7 @@ def _arch(
             model=model,
             force_all=force_all,
             dry_run=dry_run,
+            prior_rate=_arch_rate(repo_path),
         )
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         die(str(exc))
@@ -1108,6 +1109,15 @@ def _arch(
     # Head stays pinned, layer records are refreshed — same rule as the wiki layer.
     pinned_head = _baseline_head(repo_path)
     layers = _build_layers(repo_path, provider=provider, model=model, mode="arch", ai_target=ai_target, head=pinned_head)
+    file_count = summary.get("file_count")
+    elapsed_seconds = summary.get("elapsed_seconds")
+    if file_count and elapsed_seconds:
+        layers["arch"] = {
+            "file_count": file_count,
+            "elapsed_seconds": elapsed_seconds,
+            "seconds_per_file": round(elapsed_seconds / file_count, 3),
+            "recorded_at": datetime.now(UTC).isoformat(),
+        }
     _refresh_state_layers(repo_path, pipeline=layers, head=pinned_head)
 
     if mirror_vault:
@@ -1148,6 +1158,20 @@ def _graph(
         head=head,
     )
     _write_state(repo_path, pipeline=layers, head=head)
+
+
+def _arch_rate(repo_path: str) -> float | None:
+    """Seconds-per-file recorded from the last completed arch run, or None on a first run."""
+    state_file = _repo_state_file(repo_path)
+    if not state_file.exists():
+        return None
+    try:
+        state = json.loads(state_file.read_text())
+    except json.JSONDecodeError:
+        return None
+    arch_layer = state.get("layers", {}).get("arch") if isinstance(state, dict) else None
+    rate = arch_layer.get("seconds_per_file") if isinstance(arch_layer, dict) else None
+    return float(rate) if isinstance(rate, (int, float)) and rate > 0 else None
 
 
 def _reindex(repo_path: str, *, provider: str, model: str, ai_target: str) -> None:

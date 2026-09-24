@@ -129,6 +129,36 @@ class TestBaselineHead:
         assert repo_cli._baseline_head(str(tmp_path)) == "ad8d8602"
 
 
+class TestArchRate:
+    """A1: the estimate for the next arch run reads the last recorded rate from
+    state, never inventing one from a missing or malformed record.
+    """
+
+    def test_missing_state_is_none(self, repo_cli, tmp_path):
+        assert repo_cli._arch_rate(str(tmp_path)) is None
+
+    def test_no_arch_layer_recorded_yet_is_none(self, repo_cli, tmp_path):
+        state = tmp_path / ".2brain" / ".2brain-state.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text(json.dumps({"head": "abc", "layers": {"index": {}}}))
+
+        assert repo_cli._arch_rate(str(tmp_path)) is None
+
+    def test_reads_the_recorded_rate(self, repo_cli, tmp_path):
+        state = tmp_path / ".2brain" / ".2brain-state.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text(json.dumps({"head": "abc", "layers": {"arch": {"seconds_per_file": 4.5}}}))
+
+        assert repo_cli._arch_rate(str(tmp_path)) == 4.5
+
+    def test_corrupt_state_is_none(self, repo_cli, tmp_path):
+        state = tmp_path / ".2brain" / ".2brain-state.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text("{not json")
+
+        assert repo_cli._arch_rate(str(tmp_path)) is None
+
+
 class TestBuildLayersHeadIsExplicit:
     """C1: _build_layers no longer resolves HEAD itself — every artifact it
     writes must stamp exactly the head the caller passes, even when the real
