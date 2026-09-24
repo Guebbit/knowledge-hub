@@ -493,62 +493,187 @@ def _check(repo_path: str) -> int:
     return 2 if stale else 0
 
 
-def _install_hook(repo_path: str) -> int:
-    if not _in_git_repo(repo_path):
-        die("'2brain hook' requires a git repository")
+_HOOK_MARKER = "# 2brain:start"
 
-    hooks_dir = Path(repo_path) / ".git" / "hooks"
-    hooks_dir.mkdir(parents=True, exist_ok=True)
-    hook_path = hooks_dir / "post-commit"
+
+def _hook_body() -> str:
+    """POSIX-sh post-commit body: only prints, never blocks or changes a commit.
+
+    Husky runs hook files with `sh -e`, ignoring the shebang, so this cannot
+    use bash's `[[ ]]`/`${{...}}` — one body, portable to every case in
+    _hook_target's table. $repo_root and the state file are resolved at
+    commit time, not install time, so the same body works from any location.
+    """
     threshold = _resolve_threshold()
     wiki_auto = "1" if (os.getenv("REPO_WIKI_AUTO") or "").strip() == "1" else "0"
-    hook = f"""#!/usr/bin/env bash
-set -euo pipefail
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-[[ -z "${{repo_root}}" ]] && exit 0
-state_file="${{repo_root}}/{_STATE_FILE_SUBPATH.as_posix()}"
-[[ ! -f "${{state_file}}" ]] && exit 0
+    return f"""#!/bin/sh
+{_HOOK_MARKER} — regenerate with: 2brain hook <repo-path>
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+[ -z "$repo_root" ] && exit 0
+state_file="$repo_root/{_STATE_FILE_SUBPATH.as_posix()}"
+[ ! -f "$state_file" ] && exit 0
 
-base_commit="$(grep -Eo '"head"\\s*:\\s*"[^"]+"' "${{state_file}}" | head -n1 | sed -E 's/.*"([^"]+)"/\\1/')"
-[[ -z "${{base_commit}}" ]] && exit 0
-if ! git cat-file -e "${{base_commit}}^{{commit}}" 2>/dev/null; then
-  exit 0
-fi
+base_commit=$(grep -Eo '"head"[[:space:]]*:[[:space:]]*"[^"]+"' "$state_file" | head -n1 | sed -E 's/.*"([^"]+)"/\\1/')
+[ -z "$base_commit" ] && exit 0
+git cat-file -e "$base_commit^{{commit}}" 2>/dev/null || exit 0
 
-changed="$(git diff --name-only "${{base_commit}}"..HEAD -- \\
+changed=$(git diff --name-only "$base_commit"..HEAD -- \\
 {_hook_excludes_block()}
-  | sed '/^$/d' | wc -l)"
-threshold="{threshold}"
+  | sed '/^$/d' | wc -l)
+threshold={threshold}
 
-if [[ "${{threshold}}" -gt 0 && "${{changed}}" -ge "${{threshold}}" ]]; then
-  echo "2brain warning: graph may be stale (${{changed}} files changed since last generation, threshold=${{threshold}})." >&2
+if [ "$threshold" -gt 0 ] && [ "$changed" -ge "$threshold" ]; then
+  echo "2brain warning: graph may be stale ($changed files changed since last generation, threshold=$threshold)." >&2
   echo "Run: 2brain graph . --update   (or full run: 2brain graph .)" >&2
   echo "Wiki: 2brain wiki .            (incremental wiki refresh for changed files)" >&2
 fi
 
 # Auto-refresh the wiki when: enabled at hook-install time, something changed, and the 2brain alias exists.
-if [[ "{wiki_auto}" == "1" && "${{changed}}" -gt 0 ]] && command -v 2brain >/dev/null 2>&1; then
+if [ "{wiki_auto}" = "1" ] && [ "$changed" -gt 0 ] && command -v 2brain >/dev/null 2>&1; then
   echo "2brain: refreshing wiki incrementally (REPO_WIKI_AUTO=1)..." >&2
-  2brain wiki "${{repo_root}}" || echo "2brain: wiki refresh failed — run manually: 2brain wiki ." >&2
+  2brain wiki "$repo_root" || echo "2brain: wiki refresh failed — run manually: 2brain wiki ." >&2
 fi
+# 2brain:end
 """
-    hook_path.write_text(hook)
-    hook_path.chmod(0o755)
-    print(f"Hook     : installed stale-warning hook in {hook_path}")
-    print(f"Hook     : threshold={threshold} (set REPO_STALE_THRESHOLD to change)")
-    print(f"Hook     : wiki auto-refresh {'enabled' if wiki_auto == '1' else 'disabled'} (set REPO_WIKI_AUTO=1 before '2brain hook' to enable)")
-    return 0
 
 
-def _hook_is_installed(repo_path: str) -> bool:
-    """True when the post-commit hook in place was written by 2brain."""
-    hook_path = Path(repo_path) / ".git" / "hooks" / "post-commit"
+def _hook_is_ours(hook_path: Path) -> bool:
+    """True when the file at `hook_path` was written by 2brain (carries our marker)."""
     if not hook_path.is_file():
         return False
     try:
-        return "2brain" in hook_path.read_text(encoding="utf-8", errors="replace")
+        return _HOOK_MARKER in hook_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
+
+
+def _git_common_dir(repo_path: str) -> Path | None:
+    """The shared .git directory — same for every worktree, unlike the per-worktree .git."""
+    out = _git_output(repo_path, ["rev-parse", "--git-common-dir"])
+    if not out:
+        return None
+    path = Path(out)
+    return path if path.is_absolute() else (Path(repo_path) / path).resolve()
+
+
+def _is_tracked(repo_path: str, rel_path: str) -> bool:
+    return _git_output(repo_path, ["ls-files", "--error-unmatch", rel_path]) is not None
+
+
+def _hooks_target(repo_path: str) -> tuple[str, Path | None]:
+    """Classify where the staleness hook belongs here, and its (kind, path).
+
+    Uses `git rev-parse --git-path hooks` — the folder git actually runs hooks
+    from — instead of assuming `.git/hooks`, so a worktree or a core.hooksPath
+    override (Husky, lefthook, ...) is honoured. kind is:
+    - "git": git's own hooks dir, or a core.hooksPath outside the working
+      tree. Never committed either way.
+    - "husky": a Husky v9 hooksPath (`<dir>/_`, its private `_/h` runner
+      present) — the actual hook lives at `<dir>/post-commit`, tracked or not.
+    - "foreign": core.hooksPath points somewhere else inside the working
+      tree — an unknown hook manager, likely committed. `path` is None.
+    """
+    raw = _git_output(repo_path, ["rev-parse", "--git-path", "hooks"])
+    if not raw:
+        return "foreign", None
+    hooks_dir = Path(raw) if Path(raw).is_absolute() else (Path(repo_path) / raw).resolve()
+
+    if not _git_output(repo_path, ["config", "--get", "core.hooksPath"]):
+        return "git", hooks_dir / "post-commit"
+
+    try:
+        hooks_dir.relative_to(Path(repo_path).resolve())
+    except ValueError:
+        return "git", hooks_dir / "post-commit"
+
+    if hooks_dir.name == "_" and (hooks_dir / "h").is_file():
+        return "husky", hooks_dir.parent / "post-commit"
+
+    return "foreign", None
+
+
+def _hook_decision(repo_path: str) -> tuple[str, Path | None, str, str]:
+    """Decide what '2brain hook' should do here: (action, path, kind, reason).
+
+    action is "write" — safe to create or overwrite `path` — or "note": leave
+    everything untouched. `reason` explains a "note" (ignored for "write"):
+    "manager" (an unrecognized hook manager, no known target path), "foreign"
+    (a hook file that isn't ours), or "tracked" (Husky only — the file is ours
+    by content, but committed, so rewriting it would put a diff in the user's
+    repo). Shared by _install_hook and _offer_hook so neither ever offers or
+    performs a write the other would refuse.
+    """
+    kind, path = _hooks_target(repo_path)
+    if kind == "foreign" or path is None:
+        return "note", None, kind, "manager"
+    if not path.exists():
+        return "write", path, kind, ""
+    if not _hook_is_ours(path):
+        return "note", path, kind, "foreign"
+    if kind == "husky" and _is_tracked(repo_path, _display_hook_path(repo_path, path)):
+        return "note", path, kind, "tracked"
+    return "write", path, kind, ""
+
+
+def _display_hook_path(repo_path: str, path: Path) -> str:
+    try:
+        return str(path.relative_to(Path(repo_path).resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _print_hook_note(repo_path: str, path: Path | None, reason: str) -> None:
+    """Print the hook body and exactly where a human would paste it by hand."""
+    if reason == "manager":
+        print("Hook     : core.hooksPath points at an unrecognized hook manager — nothing written")
+        print("Hook     : add a post-commit hook there yourself:")
+    else:
+        rel = _display_hook_path(repo_path, path)
+        if reason == "tracked":
+            print(f"Hook     : {rel} is ours but tracked — left untouched (rewriting it would dirty your repo)")
+        else:
+            print(f"Hook     : {rel} is not ours — left untouched")
+        print(f"Hook     : add this to {rel} yourself (2brain didn't, because that file is shared):")
+    print(_hook_body())
+
+
+def _install_hook(repo_path: str) -> int:
+    if not _in_git_repo(repo_path):
+        die("'2brain hook' requires a git repository")
+
+    action, path, kind, reason = _hook_decision(repo_path)
+    if action == "note":
+        _print_hook_note(repo_path, path, reason)
+        return 0
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_hook_body())
+    path.chmod(0o755)
+    if kind == "husky" and not _is_tracked(repo_path, _display_hook_path(repo_path, path)):
+        common_dir = _git_common_dir(repo_path)
+        if common_dir:
+            _add_to_info_exclude(common_dir, _display_hook_path(repo_path, path))
+
+    threshold = _resolve_threshold()
+    wiki_auto = (os.getenv("REPO_WIKI_AUTO") or "").strip() == "1"
+    print(f"Hook     : installed stale-warning hook in {path}")
+    print(f"Hook     : threshold={threshold} (set REPO_STALE_THRESHOLD to change)")
+    print(f"Hook     : wiki auto-refresh {'enabled' if wiki_auto else 'disabled'} (set REPO_WIKI_AUTO=1 before '2brain hook' to enable)")
+    return 0
+
+
+def _add_to_info_exclude(common_git_dir: Path, pattern: str) -> None:
+    """Add `pattern` to <common-git-dir>/info/exclude (once), so our untracked hook stays untracked."""
+    info_dir = common_git_dir / "info"
+    info_dir.mkdir(parents=True, exist_ok=True)
+    exclude_file = info_dir / "exclude"
+    existing = exclude_file.read_text(encoding="utf-8") if exclude_file.exists() else ""
+    if pattern in existing.splitlines():
+        return
+    with exclude_file.open("a", encoding="utf-8") as handle:
+        if existing and not existing.endswith("\n"):
+            handle.write("\n")
+        handle.write(pattern + "\n")
 
 
 def _offer_hook(repo_path: str) -> None:
@@ -565,20 +690,21 @@ def _offer_hook(repo_path: str) -> None:
     trust .2brain/, the more damage a stale .2brain/ does. The end of a run is the
     one moment the state file is guaranteed fresh, so it is the honest moment to
     ask. Asked once per repo — an installed hook, a declined prompt with
-    REPO_HOOK_PROMPT=0, or a foreign post-commit hook all silence it.
+    REPO_HOOK_PROMPT=0, or a foreign hook (or hook manager) all silence it, via
+    the same _hook_decision '2brain hook' itself uses — this never offers an
+    install that would do nothing.
     """
-    if not _in_git_repo(repo_path) or _hook_is_installed(repo_path):
+    if not _in_git_repo(repo_path):
         return
     if (os.getenv(_HOOK_PROMPT_ENV) or "").strip() == "0":
         return
 
-    post_commit = Path(repo_path) / ".git" / "hooks" / "post-commit"
-    if post_commit.exists():
-        # Someone else's hook: _install_hook overwrites unconditionally, so this
-        # path must never auto-install. Say it exists and leave the choice out.
-        print(f"Hook     : post-commit hook already present ({post_commit}) — left untouched")
-        print("Hook     : '2brain hook .' would replace it with the staleness warning")
+    action, path, _kind, reason = _hook_decision(repo_path)
+    if action == "note":
+        _print_hook_note(repo_path, path, reason)
         return
+    if path.exists():
+        return  # action == "write" and it exists ⇒ it's already ours
 
     if not sys.stdin.isatty():
         print("Hook     : install a post-commit staleness warning with '2brain hook .'")
